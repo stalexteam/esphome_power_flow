@@ -63,44 +63,25 @@ enum class Side : uint8_t { LEFT, RIGHT };
 // Style — every visual constant comes from YAML. The owner must never edit C++
 // to change a colour (§8).
 // ---------------------------------------------------------------------------
+/// Only the faces. The palette lives in power_flow_render.cpp as constants
+/// transcribed from DEV/UI/POWER_FLOW_UI_SPEC.md §2 — there is a document that
+/// specifies every colour, so a YAML key for each would be twenty-six ways to
+/// contradict it. Fonts cannot follow: ESPHome builds them at codegen time from
+/// the `font:` block, and LVGL's built-in Montserrat carries no Cyrillic, so the
+/// owner's own node names would vanish.
 struct PowerFlowStyle {
-  uint16_t node_width{150};
-  uint16_t node_height{62};
-  /// Consumer boxes are one line — an icon and a name — so they do not need the
-  /// height a device box needs for its readings, and the space saved goes into
-  /// packing more of them onto the screen.
-  uint16_t load_height{44};
-  uint16_t radius{14};
-  uint32_t idle_color{0x3A4450};
-  uint32_t active_color{0x4CAF50};
-  uint32_t warn_color{0xE0A030};
-  uint32_t dead_color{0x555F6B};
-  uint32_t text_color{0xFFFFFF};
-
-  /// The node box itself. Separate from the state colours because a box's fill
-  /// and its border say "this is a device", while the state colours say "this is
-  /// what the device is doing".
-  uint32_t node_bg{0x161C24};
-  uint32_t node_border{0x2A333F};
-  /// Connectors at rest, and the pill that carries a flow figure.
-  uint32_t line_color{0xC8D2DC};
-  uint32_t badge_bg{0x1E2733};
-  uint32_t badge_text{0xFFFFFF};
-  uint16_t badge_radius{8};
-  /// Deliberately switched off, but still talking to us. Distinct from
-  /// dead_color on purpose: a ✕ means contact is lost, and an open relay that
-  /// still reports is not that (§6.1, amended after the boiler read as broken).
-  uint32_t off_color{0x6B7684};
-  /// Thickness of the battery's state-of-charge ring.
-  uint16_t ring_width{8};
 #ifdef USE_LVGL
-  const lv_font_t *value_font{nullptr};
-  const lv_font_t *label_font{nullptr};
-  /// Material Design Icons. The panel already builds this font with a pinned
-  /// tag and an explicit glyph list; the diagram reuses it (§7).
-  const lv_font_t *icon_font{nullptr};
+  const lv_font_t *font_caption{nullptr};  ///< 10 — LOSS / EFF captions
+  const lv_font_t *font_unit{nullptr};     ///< 14 — units, sub-lines, OFF
+  const lv_font_t *font_value{nullptr};    ///< 16 — consumer names, badges
+  const lv_font_t *font_sub{nullptr};      ///< 18 — Other, OnGrid
+  const lv_font_t *font_name{nullptr};     ///< 22 — node names, bus total
+  const lv_font_t *font_metric{nullptr};   ///< 28 — LOSS/EFF values, SOC
+  const lv_font_t *font_icon{nullptr};     ///< MDI, pinned tag v7.4.47
 #endif
 };
+
+
 
 // ---------------------------------------------------------------------------
 // One measured (or solved) terminal. This is both the runtime state and what
@@ -108,6 +89,7 @@ struct PowerFlowStyle {
 // ---------------------------------------------------------------------------
 struct Terminal {
   std::string name;
+  std::string icon;  ///< UTF-8 MDI glyph; empty falls back to the role's
   uint8_t device{INVALID_INDEX};
   TerminalRole role{TerminalRole::GENERIC};
 
@@ -148,6 +130,7 @@ struct Terminal {
 struct Device {
   std::string id;
   std::string name;
+  std::string icon;
   DeviceKind kind{DeviceKind::GRID};
   std::vector<uint8_t> terminals;
 
@@ -244,6 +227,8 @@ class PowerFlow : public Component {
   void set_terminal_enabled(uint8_t terminal, bool enabled);
   void set_terminal_baseline_learn(uint8_t terminal, bool learn);
   void set_terminal_sign(uint8_t terminal, int8_t sign);
+  void set_terminal_icon(uint8_t terminal, const std::string &icon);
+  void set_device_icon(uint8_t device, const std::string &icon);
 
   // --- device-level entities
   void set_device_switch(uint8_t device, text_sensor::TextSensor *sw);

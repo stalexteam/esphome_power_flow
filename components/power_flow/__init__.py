@@ -79,18 +79,13 @@ DeviceClickTrigger = automation.Trigger.template()
 # --------------------------------------------------------------------------
 # Config keys
 # --------------------------------------------------------------------------
-CONF_ACTIVE_COLOR = "active_color"
 CONF_AVERAGE_WINDOW = "average_window"
-CONF_BADGE_BG = "badge_bg"
-CONF_BADGE_RADIUS = "badge_radius"
-CONF_BADGE_TEXT = "badge_text"
 CONF_BASELINE = "baseline"
 CONF_BATTERY_DEADBAND = "battery_deadband"
 CONF_BIDIRECTIONAL = "bidirectional"
 CONF_CAPACITY = "capacity"
 CONF_CEILING = "ceiling"
 CONF_CONSUMERS = "consumers"
-CONF_DEAD_COLOR = "dead_color"
 CONF_DEVICES = "devices"
 CONF_DISCHARGE_ETA = "discharge_eta"
 CONF_ENABLED = "enabled"
@@ -99,28 +94,16 @@ CONF_FIGURE = "figure"
 CONF_GRID_LOSS_FROM_BATTERY = "grid_loss_from_battery"
 CONF_HOLD = "hold"
 CONF_IDLE_BELOW = "idle_below"
-CONF_IDLE_COLOR = "idle_color"
 CONF_INFERENCE = "inference"
 CONF_KIND = "kind"
-CONF_LABEL_FONT = "label_font"
-CONF_ICON_FONT = "icon_font"
-CONF_LINE_COLOR = "line_color"
 CONF_METER = "meter"
 CONF_MIN_DISCHARGE = "min_discharge"
 CONF_MODE = "mode"
-CONF_NODE_BG = "node_bg"
-CONF_NODE_BORDER = "node_border"
-CONF_NODE_HEIGHT = "node_height"
-CONF_LOAD_HEIGHT = "load_height"
-CONF_NODE_WIDTH = "node_width"
-CONF_OFF_COLOR = "off_color"
 CONF_ON_CLICK = "on_click"
 CONF_PARENT_ID = "parent_id"
 CONF_POWER = "power"
 CONF_PREFER = "prefer"
-CONF_RADIUS = "radius"
 CONF_REQUIRE_STALE_GRID = "require_stale_grid"
-CONF_RING_WIDTH = "ring_width"
 CONF_SIDE = "side"
 CONF_SIGN = "sign"
 CONF_SOC = "soc"
@@ -129,16 +112,21 @@ CONF_SOURCE = "source"
 CONF_STALE_AFTER = "stale_after"
 CONF_STALENESS = "staleness"
 CONF_STATUS = "status"
-CONF_STYLE = "style"
+CONF_STYLE = "fonts"
+CONF_FONT_CAPTION = "font_caption"
+CONF_FONT_UNIT = "font_unit"
+CONF_FONT_VALUE = "font_value"
+CONF_FONT_SUB = "font_sub"
+CONF_FONT_NAME = "font_name"
+CONF_FONT_METRIC = "font_metric"
+CONF_FONT_ICON = "font_icon"
+CONF_ICON = "icon"
 CONF_SUM = "sum"
 CONF_SWITCH = "switch"
 CONF_TERMINALS = "terminals"
-CONF_TEXT_COLOR = "text_color"
 CONF_UNAVAILABLE = "unavailable"
 CONF_UPDATE_INTERVAL = "update_interval"
-CONF_VALUE_FONT = "value_font"
 CONF_VOLTAGE = "voltage"
-CONF_WARN_COLOR = "warn_color"
 
 # The literal accepted by `power:` in place of an entity id. It marks the one
 # edge per node that the balance solves for (§4).
@@ -325,7 +313,7 @@ def _validate_terminal(config):
 
 
 TERMINAL_SCHEMA = cv.All(
-    cv.Schema({**_TERMINAL_KEYS, cv.Optional(CONF_NAME): cv.string}),
+    cv.Schema({**_TERMINAL_KEYS, cv.Optional(CONF_NAME): cv.string, cv.Optional(CONF_ICON): cv.string}),
     _validate_terminal,
 )
 
@@ -334,6 +322,7 @@ CONSUMER_SCHEMA = cv.All(
         {
             **_TERMINAL_KEYS,
             cv.Required(CONF_NAME): cv.string,
+            cv.Optional(CONF_ICON): cv.string,
             cv.Optional(CONF_SIDE, default="right"): cv.enum(SIDES, lower=True),
         }
     ),
@@ -364,6 +353,7 @@ DEVICE_SCHEMA = cv.Schema(
         cv.Required(CONF_ID): cv.string_strict,
         cv.Required(CONF_KIND): cv.enum(DEVICE_KINDS, lower=True),
         cv.Optional(CONF_NAME): cv.string,
+        cv.Optional(CONF_ICON): cv.string,
         cv.Optional(CONF_VOLTAGE): _ha_sensor,
         cv.Optional(CONF_SWITCH): _ha_text_sensor,
         cv.Optional(CONF_SOC): _ha_sensor,
@@ -384,37 +374,15 @@ DEVICE_SCHEMA = cv.Schema(
     }
 )
 
-STYLE_SCHEMA = cv.Schema(
+FONTS_SCHEMA = cv.Schema(
     {
-        cv.Optional(CONF_NODE_WIDTH, default=150): cv.int_range(min=1, max=65535),
-        cv.Optional(CONF_NODE_HEIGHT, default=62): cv.int_range(min=1, max=65535),
-        cv.Optional(CONF_LOAD_HEIGHT, default=44): cv.int_range(1, 65535),
-        cv.Optional(CONF_RADIUS, default=14): cv.int_range(min=0, max=65535),
-        cv.Optional(CONF_IDLE_COLOR, default=0x3A4450): cv.hex_uint32_t,
-        cv.Optional(CONF_ACTIVE_COLOR, default=0x4CAF50): cv.hex_uint32_t,
-        cv.Optional(CONF_WARN_COLOR, default=0xE0A030): cv.hex_uint32_t,
-        cv.Optional(CONF_DEAD_COLOR, default=0x555F6B): cv.hex_uint32_t,
-        cv.Optional(CONF_TEXT_COLOR, default=0xFFFFFF): cv.hex_uint32_t,
-        # The node box itself, separate from the state colours: a box's fill and
-        # border say "this is a device", the state colours say what it is doing.
-        cv.Optional(CONF_NODE_BG, default=0x161C24): cv.hex_uint32_t,
-        cv.Optional(CONF_NODE_BORDER, default=0x2A333F): cv.hex_uint32_t,
-        # Connectors at rest, and the pill that carries a flow figure (§4).
-        cv.Optional(CONF_LINE_COLOR, default=0xC8D2DC): cv.hex_uint32_t,
-        cv.Optional(CONF_BADGE_BG, default=0x1E2733): cv.hex_uint32_t,
-        cv.Optional(CONF_BADGE_TEXT, default=0xFFFFFF): cv.hex_uint32_t,
-        cv.Optional(CONF_BADGE_RADIUS, default=8): cv.int_range(min=0, max=65535),
-        # Deliberately switched off, but still reporting. Its own key rather
-        # than a reuse of `dead_color`, because the ✕ has to mean "contact with
-        # this thing is lost" and nothing else — an open relay that still talks
-        # is not that, and drawing it as dead made the boiler look broken
-        # (§6.1, amended after seeing it on the panel).
-        cv.Optional(CONF_OFF_COLOR, default=0x6B7684): cv.hex_uint32_t,
-        # Thickness of the battery's state-of-charge ring (§7).
-        cv.Optional(CONF_RING_WIDTH, default=8): cv.int_range(min=1, max=65535),
-        cv.Optional(CONF_VALUE_FONT): cv.use_id(font.Font),
-        cv.Optional(CONF_LABEL_FONT): cv.use_id(font.Font),
-        cv.Optional(CONF_ICON_FONT): cv.use_id(font.Font),
+        cv.Optional(CONF_FONT_CAPTION): cv.use_id(font.Font),
+        cv.Optional(CONF_FONT_UNIT): cv.use_id(font.Font),
+        cv.Optional(CONF_FONT_VALUE): cv.use_id(font.Font),
+        cv.Optional(CONF_FONT_SUB): cv.use_id(font.Font),
+        cv.Optional(CONF_FONT_NAME): cv.use_id(font.Font),
+        cv.Optional(CONF_FONT_METRIC): cv.use_id(font.Font),
+        cv.Optional(CONF_FONT_ICON): cv.use_id(font.Font),
     }
 )
 
@@ -573,7 +541,7 @@ CONFIG_SCHEMA = cv.All(
             # important line on the screen, and without a measured figure it
             # must stay a dash rather than inherit a guessed 0.9 (§6.9).
             cv.Optional(CONF_DISCHARGE_ETA): _ratio,
-            cv.Optional(CONF_STYLE, default={}): STYLE_SCHEMA,
+            cv.Optional(CONF_STYLE, default={}): FONTS_SCHEMA,
             cv.Optional(CONF_INFERENCE, default={}): INFERENCE_SCHEMA,
             cv.Required(CONF_DEVICES): cv.All(
                 cv.ensure_list(DEVICE_SCHEMA), cv.Length(min=1)
@@ -668,38 +636,15 @@ async def _attach_terminal(var, index, conf, role_key):
 
 
 async def _style_to_code(var, config):
+    """Only faces. Every colour is a constant in power_flow_render.cpp,
+    transcribed from DEV/UI/POWER_FLOW_UI_SPEC.md §2 — that document is the
+    authority, and a YAML key per colour would be twenty-six ways to disagree
+    with it. Fonts cannot follow: ESPHome builds them at codegen time."""
     style = config[CONF_STYLE]
-
-    def field(name, value):
-        cg.add(cg.RawStatement(f"{var}->style().{name} = {value};"))
-
-    for key in (
-        CONF_NODE_WIDTH,
-        CONF_NODE_HEIGHT, CONF_LOAD_HEIGHT,
-        CONF_RADIUS,
-        CONF_BADGE_RADIUS,
-        CONF_RING_WIDTH,
-    ):
-        field(key, style[key])
-    for key in (
-        CONF_IDLE_COLOR,
-        CONF_ACTIVE_COLOR,
-        CONF_WARN_COLOR,
-        CONF_DEAD_COLOR,
-        CONF_TEXT_COLOR,
-        CONF_NODE_BG,
-        CONF_NODE_BORDER,
-        CONF_LINE_COLOR,
-        CONF_BADGE_BG,
-        CONF_BADGE_TEXT,
-        CONF_OFF_COLOR,
-    ):
-        field(key, f"0x{style[key]:06X}")
-
-    for key in (CONF_VALUE_FONT, CONF_LABEL_FONT, CONF_ICON_FONT):
+    for key in (CONF_FONT_CAPTION, CONF_FONT_UNIT, CONF_FONT_VALUE, CONF_FONT_SUB, CONF_FONT_NAME, CONF_FONT_METRIC, CONF_FONT_ICON):
         if key in style:
             fnt = await cg.get_variable(style[key])
-            field(key, f"{fnt}->get_lv_font()")
+            cg.add(cg.RawStatement(f"{var}->style().{key} = {fnt}->get_lv_font();"))
 
 
 def _ensure_ha_platform_sources():
@@ -772,6 +717,8 @@ async def to_code(config):
         did = device[CONF_ID]
         index = device_index[did]
         cg.add(var.add_device(device[CONF_KIND], did, device.get(CONF_NAME, did)))
+        if CONF_ICON in device:
+            cg.add(var.set_device_icon(index, device[CONF_ICON]))
 
         if (sw := device.get(CONF_SWITCH)) is not None:
             cg.add(var.set_device_switch(index, await _new_ha_text_sensor(sw)))
@@ -816,6 +763,8 @@ async def to_code(config):
         index = next_terminal
         next_terminal += 1
         cg.add(var.add_consumer(consumer[CONF_NAME], consumer[CONF_SIDE]))
+        if CONF_ICON in consumer:
+            cg.add(var.set_terminal_icon(index, consumer[CONF_ICON]))
         await _attach_terminal(var, index, consumer, None)
 
     _ensure_ha_platform_sources()

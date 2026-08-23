@@ -109,6 +109,8 @@ void PowerFlow::set_terminal_bidirectional(uint8_t t, bool b) { this->terminals_
 void PowerFlow::set_terminal_enabled(uint8_t t, bool e) { this->terminals_[t].enabled = e; }
 void PowerFlow::set_terminal_baseline_learn(uint8_t t, bool l) { this->terminals_[t].learn_baseline = l; }
 void PowerFlow::set_terminal_sign(uint8_t t, int8_t s) { this->terminals_[t].sign = s; }
+void PowerFlow::set_terminal_icon(uint8_t t, const std::string &i) { this->terminals_[t].icon = i; }
+void PowerFlow::set_device_icon(uint8_t d, const std::string &i) { this->devices_[d].icon = i; }
 
 void PowerFlow::set_device_switch(uint8_t d, text_sensor::TextSensor *s) { this->devices_[d].switch_source = s; }
 void PowerFlow::set_device_voltage(uint8_t d, sensor::Sensor *v) { this->devices_[d].voltage = v; }
