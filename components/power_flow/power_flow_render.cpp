@@ -64,7 +64,19 @@ static const float DOT_SPEED_REF = 1500.0f;  ///< W at which the dots run flat o
 /// constant of its own: a stale edge is the same colour shown weaker (§6.4),
 /// and a diagram with no Home Assistant behind it is the whole tree shown
 /// weaker (§6.2).
-static const lv_opa_t OPA_STALE = 130;
+/// A stale value is dimmed and flagged, never recoloured (§6.4). `warn_color`
+/// belongs to UNRELIABLE, to a distrusted grid and to the HA banner — three
+/// states that mean "these numbers may be lies". Age means nothing of the
+/// sort, and on real cadences it fires constantly: `wallsocket_pc_power` would
+/// be flagged 22 % of six measured hours at any timeout from 14 s to 180 s,
+/// almost all of it one 82-minute silence while the PC's draw did not change.
+/// An alarm colour that shows up routinely stops being an alarm.
+///
+/// A whole faded box is a much larger visual event than a faded line, so the
+/// box gets the lighter touch of the two: it must still read as the same node,
+/// slightly faded, and not as a different state.
+static const lv_opa_t OPA_STALE = 130;       ///< connectors
+static const lv_opa_t OPA_STALE_BOX = 205;   ///< node boxes
 static const lv_opa_t OPA_NO_HA = 90;
 static const lv_opa_t OPA_CAPTION = 190;
 static const lv_opa_t OPA_LINE_IDLE = 120;
@@ -349,6 +361,7 @@ uint8_t FlowRenderer::add_node_(Slot slot, uint8_t device, uint8_t terminal, int
     const lv_font_t *rf = s.value_font;
     if (rf == nullptr || text_width(rf, WIDEST_SOC) > usable || line_h(rf, 28) > usable)
       rf = s.label_font;
+    const int rh = line_h(rf, 20);
     ESP_LOGI(TAG, "ring: outer %d, ring_width %d, inner %d, usable %d — \"%s\" is %d px, using %s",
              d, (int) s.ring_width, inner, usable, WIDEST_SOC, text_width(rf, WIDEST_SOC),
              rf == s.value_font ? "value_font" : "label_font");
@@ -372,13 +385,17 @@ uint8_t FlowRenderer::add_node_(Slot slot, uint8_t device, uint8_t terminal, int
     lv_obj_set_style_arc_color(n.ring, lv_color_hex(s.idle_color), LV_PART_MAIN);
     lv_obj_set_style_arc_color(n.ring, lv_color_hex(s.active_color), LV_PART_INDICATOR);
 #endif
-    const int rh = line_h(rf, 20);
     n.ring_lbl = this->label_(n.box, rf, rx, pad + (d - rh) / 2, d, LV_TEXT_ALIGN_CENTER,
                               s.text_color, LV_OPA_COVER);
     // Where the ring goes when the BMS is not reachable at all. The battery is
     // spine: it says OFFLINE in words rather than only going pale (§6.2).
     n.r1 = this->label_(n.box, s.label_font, pad, pad + (d - sh) / 2, w - 2 * pad,
                         LV_TEXT_ALIGN_CENTER, s.dead_color, LV_OPA_COVER);
+    // ...and the stale caption goes under the percentage, still inside the
+    // ring, where there is room for it without costing the box a line. The
+    // circle is 2*sqrt(r^2 - dy^2) wide here, which comfortably holds the word.
+    n.r2 = this->label_(n.box, s.label_font, rx, pad + (d - rh) / 2 + rh + 2, d,
+                        LV_TEXT_ALIGN_CENTER, s.text_color, OPA_CAPTION);
 
     if (tx > pad)
       n.icon = this->label_(n.box, s.icon_font, pad, name_y + (row_h - ih) / 2, ih + 4,
@@ -796,7 +813,11 @@ void FlowRenderer::build_(lv_obj_t *parent) {
     this->add_node_(Slot::ONGRID, d_grid, t_tap, x_tap, y_conv + (h_conv - h_load) / 2, side_w,
                     h_load, f_loads, 0);
   if (d_inv != INVALID_INDEX)
-    this->add_node_(Slot::INVERTER, d_inv, INVALID_INDEX, col_c, y_conv, w_inv, h_conv, f_spine, 2);
+    // Three lines: loss, efficiency, and a slot the stale caption borrows. It
+    // is empty almost always, and the box is centred on what it actually
+    // holds, so an empty third line costs nothing but the room to say STALE
+    // without shortening anything else.
+    this->add_node_(Slot::INVERTER, d_inv, INVALID_INDEX, col_c, y_conv, w_inv, h_conv, f_spine, 3);
   if (d_bat != INVALID_INDEX)
     this->add_node_(Slot::BATTERY, d_bat, t_bat, x_bat, y_conv, w_bat, h_conv, f_spine, 0);
 
@@ -1088,12 +1109,16 @@ const Device *FlowRenderer::dev_(uint8_t index) const {
 /// OPEN and DE_ENERGIZED are two different greys on purpose. They used to be
 /// one, and on glass that read as "the boiler is broken" when the owner had
 /// simply switched it off (§6.1, amended 2026-08-23).
+///
+/// Staleness is deliberately absent from this function: age changes how firmly
+/// a state is asserted, not which state it is, so it is carried by opacity and
+/// a caption and never by a colour.
 uint32_t FlowRenderer::state_color_(const Terminal *t) const {
   const PowerFlowStyle &s = this->pf_->style();
   if (t == nullptr || !this->ha_contact_)
     return s.line_color;
   switch (t->state) {
-    case EdgeState::ACTIVE: return t->stale ? s.warn_color : s.active_color;
+    case EdgeState::ACTIVE: return s.active_color;
     case EdgeState::OPEN: return s.off_color;
     case EdgeState::DE_ENERGIZED: return s.dead_color;
     default: return s.line_color;  // IDLE, NO_DATA — the wire is there, quiet
@@ -1229,8 +1254,8 @@ void FlowRenderer::update_edge_(Edge &e) {
   } else {
     btxt = fmt_power(v);
   }
-  if (ha && t != nullptr && t->stale && !btxt.empty() && !open)
-    bcol = s.warn_color;
+  // No recolour for a stale figure: the pill it sits in is already dimmed with
+  // the rest of the edge, and that is the whole of the signal.
   this->set_badge_(e, btxt, bcol);
 
   // ---- the arrowhead follows the sign, not the table
@@ -1278,8 +1303,7 @@ void FlowRenderer::update_node_(Node &n) {
   set_text(n.name, n.txt_name, name);
 
   // ---- the device-level readings, and what replaces them when they are gone
-  std::string r1, r2;
-  const std::string r3;  // no third reading line on any box today
+  std::string r1, r2, r3;
   uint32_t r1col = s.text_color;
   switch (n.slot) {
     case Slot::GRID:
@@ -1320,6 +1344,15 @@ void FlowRenderer::update_node_(Node &n) {
       }
       if (!ha && r1.empty())
         r1 = DASH;
+      // The inverter has no terminal of its own, so its age is the age of the
+      // two meters it is drawn from. It and the battery are the two nodes that
+      // must never be ambiguous, and both have the room for the word.
+      {
+        const Terminal *ti = this->term_(this->t_in_);
+        const Terminal *to = this->term_(this->t_out_);
+        if (ha && ((ti != nullptr && ti->stale) || (to != nullptr && to->stale)))
+          r3 = "STALE";
+      }
       // No supply-mode line. Which connector is lit and which way its dots run
       // already says whether the house is on the grid or on the battery;
       // spending the box's fourth line to repeat the animation is the same
@@ -1332,13 +1365,16 @@ void FlowRenderer::update_node_(Node &n) {
       if (this->battery_offline_()) {
         r1 = "OFFLINE";
         r1col = s.dead_color;
+      } else if (stale) {
+        r2 = "STALE";  // under the percentage, inside the ring
       }
       break;
 
     default:
-      // A de-energized load says nothing: it goes pale and its connector
-      // carries the ✕, which is the same statement without a second line
-      // (§6.2, amended after OFFLINE cost BOLIVAR a line for no information).
+      // A load says nothing in words at all. De-energized, it goes pale and
+      // its connector carries the ✕; stale, it fades a little and nothing
+      // else. The box is one line, and a caption there costs it a second one
+      // for information the fill and the marker already carry.
       break;
   }
   set_text(n.r1, n.txt_r1, r1);
@@ -1416,7 +1452,7 @@ void FlowRenderer::update_node_(Node &n) {
     n.col_bg = bg;
     lv_obj_set_style_bg_color(n.box, lv_color_hex(bg), LV_PART_MAIN);
   }
-  const lv_opa_t opa = stale ? OPA_STALE : (lv_opa_t) LV_OPA_COVER;
+  const lv_opa_t opa = stale ? OPA_STALE_BOX : (lv_opa_t) LV_OPA_COVER;
   if (opa != n.opa) {
     n.opa = opa;
     lv_obj_set_style_opa(n.box, opa, LV_PART_MAIN);
