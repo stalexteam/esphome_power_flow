@@ -127,6 +127,7 @@ CONF_SOC = "soc"
 CONF_SOC_CUTOFF = "soc_cutoff"
 CONF_SOURCE = "source"
 CONF_STALE_AFTER = "stale_after"
+CONF_STALENESS = "staleness"
 CONF_STATUS = "status"
 CONF_STYLE = "style"
 CONF_SUM = "sum"
@@ -299,6 +300,7 @@ _TERMINAL_KEYS = {
     cv.Optional(CONF_CEILING): _power,
     cv.Optional(CONF_BASELINE): cv.one_of("learn", "none", lower=True),
     cv.Optional(CONF_STALE_AFTER): cv.positive_time_period_milliseconds,
+    cv.Optional(CONF_STALENESS, default=False): cv.boolean,
     cv.Optional(CONF_BIDIRECTIONAL): cv.boolean,
     cv.Optional(CONF_SIGN): cv.enum(SIGNS, lower=True),
 }
@@ -646,6 +648,8 @@ async def _attach_terminal(var, index, conf, role_key):
         cg.add(var.set_terminal_enabled(index, False))
     if (stale_after := conf.get(CONF_STALE_AFTER)) is not None:
         cg.add(var.set_terminal_stale_after(index, stale_after))
+        if conf.get(CONF_STALENESS) or CONF_STALE_AFTER in conf:
+            cg.add(var.set_terminal_detect_stale(index, True))
     if conf.get(CONF_BASELINE) == "learn":
         cg.add(var.set_terminal_baseline_learn(index, True))
 

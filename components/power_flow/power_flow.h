@@ -125,6 +125,13 @@ struct Terminal {
   int8_t sign{1};             ///< orientation at its node: +1 in, -1 out
   Side side{Side::RIGHT};     ///< consumers only
   uint32_t stale_after{0};    ///< manual override; 0 = learn the cadence
+  /// Off by default, and that is a measured decision rather than caution.
+  /// Zigbee power meters publish on *change past a threshold*, so the interval
+  /// between reports measures how volatile the load is, not whether the device
+  /// is alive: a steady load goes quiet, and the detector then flags exactly the
+  /// readings that deserve the most trust. Enable it only on a source with a
+  /// genuinely fixed cadence.
+  bool detect_stale{false};
 
   // --- runtime, one entry per meter so `prefer` can fail over
   std::vector<TimeWeightedAverage> average;
@@ -232,6 +239,7 @@ class PowerFlow : public Component {
   void set_terminal_auto(uint8_t terminal, float ceiling);
   void set_terminal_unavailable(uint8_t terminal, UnavailablePolicy policy);
   void set_terminal_stale_after(uint8_t terminal, uint32_t stale_after_ms);
+  void set_terminal_detect_stale(uint8_t terminal, bool detect);
   void set_terminal_bidirectional(uint8_t terminal, bool bidirectional);
   void set_terminal_enabled(uint8_t terminal, bool enabled);
   void set_terminal_baseline_learn(uint8_t terminal, bool learn);

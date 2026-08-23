@@ -104,6 +104,7 @@ void PowerFlow::set_terminal_stale_after(uint8_t t, uint32_t ms) {
     s.set_stale_after(ms);
   this->terminals_[t].stale_after = ms;
 }
+void PowerFlow::set_terminal_detect_stale(uint8_t t, bool d) { this->terminals_[t].detect_stale = d; }
 void PowerFlow::set_terminal_bidirectional(uint8_t t, bool b) { this->terminals_[t].bidirectional = b; }
 void PowerFlow::set_terminal_enabled(uint8_t t, bool e) { this->terminals_[t].enabled = e; }
 void PowerFlow::set_terminal_baseline_learn(uint8_t t, bool l) { this->terminals_[t].learn_baseline = l; }
@@ -241,9 +242,11 @@ void PowerFlow::resolve_() {
       continue;  // filled in by solve_()
 
     t.stale = false;
-    for (size_t mi = 0; mi < t.meters.size(); mi++) {
-      if (t.staleness[mi].stale(now) && is_valid(t.average[mi].last()))
-        t.stale = true;
+    if (t.detect_stale) {
+      for (size_t mi = 0; mi < t.meters.size(); mi++) {
+        if (t.staleness[mi].stale(now) && is_valid(t.average[mi].last()))
+          t.stale = true;
+      }
     }
 
     if (t.meters.empty()) {
