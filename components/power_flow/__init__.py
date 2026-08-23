@@ -114,13 +114,19 @@ CONF_STALE_AFTER = "stale_after"
 CONF_STALENESS = "staleness"
 CONF_STATUS = "status"
 CONF_STYLE = "fonts"
-CONF_FONT_CAPTION = "font_caption"
-CONF_FONT_UNIT = "font_unit"
-CONF_FONT_VALUE = "font_value"
-CONF_FONT_SUB = "font_sub"
-CONF_FONT_NAME = "font_name"
-CONF_FONT_METRIC = "font_metric"
-CONF_FONT_ICON = "font_icon"
+CONF_F_S10 = "s10"
+CONF_F_S14 = "s14"
+CONF_F_S16 = "s16"
+CONF_F_S18 = "s18"
+CONF_F_S20 = "s20"
+CONF_F_S22 = "s22"
+CONF_F_M12 = "m12"
+CONF_F_M14 = "m14"
+CONF_F_M16 = "m16"
+CONF_F_M22 = "m22"
+CONF_F_M28 = "m28"
+CONF_F_M72 = "m72"
+CONF_F_ICON = "icon"
 CONF_ICON = "icon"
 CONF_SUM = "sum"
 CONF_SWITCH = "switch"
@@ -377,13 +383,19 @@ DEVICE_SCHEMA = cv.Schema(
 
 FONTS_SCHEMA = cv.Schema(
     {
-        cv.Optional(CONF_FONT_CAPTION): cv.use_id(font.Font),
-        cv.Optional(CONF_FONT_UNIT): cv.use_id(font.Font),
-        cv.Optional(CONF_FONT_VALUE): cv.use_id(font.Font),
-        cv.Optional(CONF_FONT_SUB): cv.use_id(font.Font),
-        cv.Optional(CONF_FONT_NAME): cv.use_id(font.Font),
-        cv.Optional(CONF_FONT_METRIC): cv.use_id(font.Font),
-        cv.Optional(CONF_FONT_ICON): cv.use_id(font.Font),
+        cv.Required(CONF_F_S10): cv.use_id(font.Font),
+        cv.Required(CONF_F_S14): cv.use_id(font.Font),
+        cv.Required(CONF_F_S16): cv.use_id(font.Font),
+        cv.Required(CONF_F_S18): cv.use_id(font.Font),
+        cv.Required(CONF_F_S20): cv.use_id(font.Font),
+        cv.Required(CONF_F_S22): cv.use_id(font.Font),
+        cv.Required(CONF_F_M12): cv.use_id(font.Font),
+        cv.Required(CONF_F_M14): cv.use_id(font.Font),
+        cv.Required(CONF_F_M16): cv.use_id(font.Font),
+        cv.Required(CONF_F_M22): cv.use_id(font.Font),
+        cv.Required(CONF_F_M28): cv.use_id(font.Font),
+        cv.Required(CONF_F_M72): cv.use_id(font.Font),
+        cv.Required(CONF_F_ICON): cv.use_id(font.Font),
     }
 )
 
@@ -644,15 +656,14 @@ async def _attach_terminal(var, index, conf, role_key):
 
 
 async def _style_to_code(var, config):
-    """Only faces. Every colour is a constant in power_flow_render.cpp,
-    transcribed from DEV/UI/POWER_FLOW_UI_SPEC.md §2 — that document is the
-    authority, and a YAML key per colour would be twenty-six ways to disagree
-    with it. Fonts cannot follow: ESPHome builds them at codegen time."""
-    style = config[CONF_STYLE]
-    for key in (CONF_FONT_CAPTION, CONF_FONT_UNIT, CONF_FONT_VALUE, CONF_FONT_SUB, CONF_FONT_NAME, CONF_FONT_METRIC, CONF_FONT_ICON):
-        if key in style:
-            fnt = await cg.get_variable(style[key])
-            cg.add(cg.RawStatement(f"{var}->style().{key} = {fnt}->get_lv_font();"))
+    """Twelve rasters plus the icon face, named for the spec's two tables so the
+    transcription can be checked line by line (§8). Required rather than
+    optional: a missing face is a blank label, and a blank label on a wall panel
+    is indistinguishable from a value that failed to arrive."""
+    fonts = config[CONF_STYLE]
+    for key in (CONF_F_S10, CONF_F_S14, CONF_F_S16, CONF_F_S18, CONF_F_S20, CONF_F_S22, CONF_F_M12, CONF_F_M14, CONF_F_M16, CONF_F_M22, CONF_F_M28, CONF_F_M72, CONF_F_ICON):
+        fnt = await cg.get_variable(fonts[key])
+        cg.add(cg.RawStatement(f"{var}->style().{key} = {fnt}->get_lv_font();"))
 
 
 def _ensure_ha_platform_sources():

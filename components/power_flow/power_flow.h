@@ -69,17 +69,38 @@ enum class Side : uint8_t { LEFT, RIGHT };
 /// contradict it. Fonts cannot follow: ESPHome builds them at codegen time from
 /// the `font:` block, and LVGL's built-in Montserrat carries no Cyrillic, so the
 /// owner's own node names would vanish.
+/// Only the faces. Every colour is a constant in power_flow_render.cpp,
+/// transcribed from DEV/UI/POWER_FLOW_UI_SPEC.md §2 — there is a document that
+/// specifies each one, so a YAML key per colour would be twenty-six ways to
+/// contradict it. Fonts cannot follow: ESPHome builds them at codegen time.
+///
+/// Named by family and size rather than by role, and deliberately so. §8 states
+/// one rule — every numeral is monospaced, every word is Montserrat — which
+/// makes the family a property of the glyphs and not of the context. Slots that
+/// mirror the spec's two tables turn transcription into a line-by-line job with
+/// nothing left to interpret.
 struct PowerFlowStyle {
 #ifdef USE_LVGL
-  const lv_font_t *font_caption{nullptr};  ///< 10 — LOSS / EFF captions
-  const lv_font_t *font_unit{nullptr};     ///< 14 — units, sub-lines, OFF
-  const lv_font_t *font_value{nullptr};    ///< 16 — consumer names, badges
-  const lv_font_t *font_sub{nullptr};      ///< 18 — Other, OnGrid
-  const lv_font_t *font_name{nullptr};     ///< 22 — node names, bus total
-  const lv_font_t *font_metric{nullptr};   ///< 28 — LOSS/EFF values, SOC
-  const lv_font_t *font_icon{nullptr};     ///< MDI, pinned tag v7.4.47
+  // Montserrat: words, captions, node names.
+  const lv_font_t *s10{nullptr};  ///< letter-spaced captions
+  const lv_font_t *s14{nullptr};  ///< sub-lines, OFF, Balancing
+  const lv_font_t *s16{nullptr};  ///< consumer names, table labels, Back
+  const lv_font_t *s18{nullptr};  ///< Other, OnGrid, BULK
+  const lv_font_t *s20{nullptr};  ///< node names in the narrow cards
+  const lv_font_t *s22{nullptr};  ///< node names in the wide cards
+
+  // JetBrains Mono: every numeral, and the units that ride along with one.
+  const lv_font_t *m12{nullptr};  ///< units next to a value
+  const lv_font_t *m14{nullptr};  ///< % under the flow SOC, source sub-values
+  const lv_font_t *m16{nullptr};  ///< badge values, table values, cell index
+  const lv_font_t *m22{nullptr};  ///< triple values, bus total, cell voltages
+  const lv_font_t *m28{nullptr};  ///< LOSS / EFF, SOC number on the flow page
+  const lv_font_t *m72{nullptr};  ///< SOC number on the battery screen
+
+  const lv_font_t *icon{nullptr};  ///< MDI, pinned tag v7.4.47
 #endif
 };
+
 
 
 

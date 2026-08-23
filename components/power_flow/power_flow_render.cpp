@@ -231,7 +231,7 @@ static std::string fmt_signed_power(float w) {
   return buf;
 }
 
-/// Splits a formatted power into the part `font_metric` can draw — digits, sign,
+/// Splits a formatted power into the part `m28` can draw — digits, sign,
 /// decimal point — and the part it cannot: `W`, `kW`. f_pf_metric is built with
 /// a digits-only glyph list, so this split is load-bearing, not cosmetic.
 static void split_number(const std::string &s, std::string &num, std::string &unit) {
@@ -307,7 +307,7 @@ bool FlowRenderer::has_glyph_(const lv_font_t *font, uint32_t cp) const {
 }
 
 std::string FlowRenderer::icon_text_(const std::string &configured, uint32_t fallback) const {
-  const lv_font_t *f = this->pf_->style().font_icon;
+  const lv_font_t *f = this->pf_->style().icon;
   const uint32_t cp = decode_utf8(configured);
   if (this->has_glyph_(f, cp))
     return configured;
@@ -424,7 +424,7 @@ void FlowRenderer::build_source_(Node &n, int x, int w, uint32_t icon_col,
   const std::string glyph = this->icon_text_(configured, fallback);
 
   const int cw = w - 2, ch = ROW1_H - 2;
-  const int ih = glyph.empty() ? 0 : line_h(s.font_icon, 26);
+  const int ih = glyph.empty() ? 0 : line_h(s.icon, 26);
   const int gap = glyph.empty() ? 0 : 7;
   const int nh = line_h(name_font, 24);
   const int sh = line_h(sub_font, 18);
@@ -433,7 +433,7 @@ void FlowRenderer::build_source_(Node &n, int x, int w, uint32_t icon_col,
     y = 1;
 
   if (!glyph.empty()) {
-    n.icon = this->label_(n.box, s.font_icon, 0, y, cw, LV_TEXT_ALIGN_CENTER, icon_col);
+    n.icon = this->label_(n.box, s.icon, 0, y, cw, LV_TEXT_ALIGN_CENTER, icon_col);
     lv_label_set_text(n.icon, glyph.c_str());
     y += ih + 7;
   }
@@ -456,23 +456,23 @@ void FlowRenderer::build_other_(Node &n) {
   const std::string glyph = this->icon_text_(t != nullptr ? t->icon : std::string(), MDI_DOTS);
 
   const int cw = COL_L_W - 2, ch = CORE_H - 2;
-  const int ih = glyph.empty() ? 0 : line_h(s.font_icon, 26);
+  const int ih = glyph.empty() ? 0 : line_h(s.icon, 26);
   const int gap = glyph.empty() ? 0 : 8;
-  const int nh = line_h(s.font_sub, 22);
-  const int sh = line_h(s.font_unit, 18);
+  const int nh = line_h(s.s18, 22);
+  const int sh = line_h(s.s14, 18);
   int y = (ch - (ih + gap + nh + 8 + sh)) / 2;
 
   if (!glyph.empty()) {
-    n.icon = this->label_(n.box, s.font_icon, 0, y, cw, LV_TEXT_ALIGN_CENTER, pal::load);
+    n.icon = this->label_(n.box, s.icon, 0, y, cw, LV_TEXT_ALIGN_CENTER, pal::load);
     lv_label_set_text(n.icon, glyph.c_str());
     y += ih + 8;
   }
-  n.name = this->label_(n.box, s.font_sub, 0, y, cw, LV_TEXT_ALIGN_CENTER, pal::text);
+  n.name = this->label_(n.box, s.s18, 0, y, cw, LV_TEXT_ALIGN_CENTER, pal::text);
   y += nh + 8;
   // "Load" is the design's own second line, not a caption the config supplies:
   // §4.2 names this node `Other Load` and draws the word in `text_dim` under
   // whatever the owner called the remainder.
-  n.sub = this->label_(n.box, s.font_unit, 0, y, cw, LV_TEXT_ALIGN_CENTER, pal::text_dim);
+  n.sub = this->label_(n.box, s.s14, 0, y, cw, LV_TEXT_ALIGN_CENTER, pal::text_dim);
   lv_label_set_text(n.sub, "Load");
 }
 
@@ -493,40 +493,40 @@ void FlowRenderer::build_inverter_(Node &n) {
   const int row_h = INV_RULE_Y - INV_PAD_Y - 15;
   int tx = INV_PAD_X;
   if (!glyph.empty()) {
-    const int ih = line_h(s.font_icon, 26);
-    const int iw = text_width(s.font_icon, glyph.c_str());
-    n.icon = this->label_(n.box, s.font_icon, INV_PAD_X, INV_PAD_Y + (row_h - ih) / 2, iw + 2,
+    const int ih = line_h(s.icon, 26);
+    const int iw = text_width(s.icon, glyph.c_str());
+    n.icon = this->label_(n.box, s.icon, INV_PAD_X, INV_PAD_Y + (row_h - ih) / 2, iw + 2,
                           LV_TEXT_ALIGN_LEFT, pal::load);
     lv_label_set_text(n.icon, glyph.c_str());
     tx = INV_PAD_X + iw + 10;
   }
-  const int nh = line_h(s.font_name, 27);
-  n.name = this->label_(n.box, s.font_name, tx, INV_PAD_Y + (row_h - nh) / 2,
+  const int nh = line_h(s.s22, 27);
+  n.name = this->label_(n.box, s.s22, tx, INV_PAD_Y + (row_h - nh) / 2,
                         COL_C_W - 2 - INV_PAD_X - tx, LV_TEXT_ALIGN_LEFT, pal::text);
   lv_label_set_long_mode(n.name, LV_LABEL_LONG_MODE_DOTS);
 
   n.rule = this->rect_(n.box, {INV_PAD_X, INV_RULE_Y, (int16_t) cw, 1}, pal::divider);
 
-  n.cap_loss = this->label_(n.box, s.font_caption, INV_PAD_X, INV_CAP_Y, -1, LV_TEXT_ALIGN_LEFT,
+  n.cap_loss = this->label_(n.box, s.s10, INV_PAD_X, INV_CAP_Y, -1, LV_TEXT_ALIGN_LEFT,
                             pal::text_dim);
-  n.cap_eff = this->label_(n.box, s.font_caption, INV_EFF_X, INV_CAP_Y, -1, LV_TEXT_ALIGN_LEFT,
+  n.cap_eff = this->label_(n.box, s.s10, INV_EFF_X, INV_CAP_Y, -1, LV_TEXT_ALIGN_LEFT,
                            pal::text_dim);
   lv_obj_set_style_text_letter_space(n.cap_loss, 1, LV_PART_MAIN);
   lv_obj_set_style_text_letter_space(n.cap_eff, 1, LV_PART_MAIN);
   lv_label_set_text(n.cap_loss, "LOSS");
   lv_label_set_text(n.cap_eff, "EFF");
 
-  n.val_loss = this->label_(n.box, s.font_metric, INV_PAD_X, INV_VAL_Y, -1, LV_TEXT_ALIGN_LEFT,
+  n.val_loss = this->label_(n.box, s.m28, INV_PAD_X, INV_VAL_Y, -1, LV_TEXT_ALIGN_LEFT,
                             pal::text);
-  n.unit_loss = this->label_(n.box, s.font_unit, INV_PAD_X, INV_VAL_Y, -1, LV_TEXT_ALIGN_LEFT,
+  n.unit_loss = this->label_(n.box, s.m12, INV_PAD_X, INV_VAL_Y, -1, LV_TEXT_ALIGN_LEFT,
                              pal::text_dim);
-  n.val_eff = this->label_(n.box, s.font_metric, INV_EFF_X, INV_VAL_Y, -1, LV_TEXT_ALIGN_LEFT,
+  n.val_eff = this->label_(n.box, s.m28, INV_EFF_X, INV_VAL_Y, -1, LV_TEXT_ALIGN_LEFT,
                            pal::text);
-  n.unit_eff = this->label_(n.box, s.font_unit, INV_EFF_X, INV_VAL_Y, -1, LV_TEXT_ALIGN_LEFT,
+  n.unit_eff = this->label_(n.box, s.m12, INV_EFF_X, INV_VAL_Y, -1, LV_TEXT_ALIGN_LEFT,
                             pal::text_dim);
 
   // §6 — the spine prints OFFLINE in words rather than only going pale.
-  n.offline = this->label_(n.box, s.font_sub, INV_PAD_X, INV_OFF_Y, cw, LV_TEXT_ALIGN_LEFT,
+  n.offline = this->label_(n.box, s.s18, INV_PAD_X, INV_OFF_Y, cw, LV_TEXT_ALIGN_LEFT,
                            pal::text_off);
   lv_label_set_text(n.offline, "OFFLINE");
   set_hidden(n.offline, true);
@@ -535,7 +535,7 @@ void FlowRenderer::build_inverter_(Node &n) {
   // same treatment as LOSS / EFF, in `alert`, in the band the card already has
   // spare, plus an `alert` border. It says nothing at all when the balance is
   // sound, which is the whole reason the old bottom strip was deleted.
-  n.unreliable = this->label_(n.box, s.font_caption, INV_PAD_X, INV_UNREL_Y, cw,
+  n.unreliable = this->label_(n.box, s.s10, INV_PAD_X, INV_UNREL_Y, cw,
                               LV_TEXT_ALIGN_LEFT, pal::alert);
   lv_obj_set_style_text_letter_space(n.unreliable, 1, LV_PART_MAIN);
   lv_label_set_text(n.unreliable, "UNRELIABLE");
@@ -554,8 +554,8 @@ void FlowRenderer::build_battery_(Node &n) {
   // In content coordinates, with the 1 px border, that is (53, 86).
   const int cw = COL_R_W - 2;
   const int rcx = 410 - (COL_R_X + 1), rcy = 287 - (CORE_Y + 1);
-  const int nh = line_h(s.font_value, 20);
-  n.name = this->label_(n.box, s.font_value, 0, (244 - (CORE_Y + 1)) - 8 - nh, cw,
+  const int nh = line_h(s.s16, 20);
+  n.name = this->label_(n.box, s.s16, 0, (244 - (CORE_Y + 1)) - 8 - nh, cw,
                         LV_TEXT_ALIGN_CENTER, pal::text);
 
   // radius 37, stroke 6.5. LVGL centres its stroke on (size - width) / 2, so an
@@ -589,17 +589,17 @@ void FlowRenderer::build_battery_(Node &n) {
   // group off the ring's axis, and the ring is the one thing on this card the
   // eye centres on. Both labels span the ring and centre their own text, so the
   // group stays put as 9 % becomes 100 %.
-  const int mh = line_h(s.font_metric, 34);
-  const int uh = line_h(s.font_unit, 17);
+  const int mh = line_h(s.m28, 34);
+  const int uh = line_h(s.m14, 17);
   const int gap = -5;  // metric digits carry a descender's worth of empty space
   const int top = rcy - (mh + gap + uh) / 2;
-  n.soc_num = this->label_(n.box, s.font_metric, rcx - rd / 2, top, rd, LV_TEXT_ALIGN_CENTER,
+  n.soc_num = this->label_(n.box, s.m28, rcx - rd / 2, top, rd, LV_TEXT_ALIGN_CENTER,
                            pal::text);
-  n.soc_pct = this->label_(n.box, s.font_unit, rcx - rd / 2, top + mh + gap, rd,
+  n.soc_pct = this->label_(n.box, s.m14, rcx - rd / 2, top + mh + gap, rd,
                            LV_TEXT_ALIGN_CENTER, pal::text_dim);
   lv_label_set_text(n.soc_pct, "%");
 
-  n.offline = this->label_(n.box, s.font_value, 0, rcy - nh / 2, cw, LV_TEXT_ALIGN_CENTER,
+  n.offline = this->label_(n.box, s.s16, 0, rcy - nh / 2, cw, LV_TEXT_ALIGN_CENTER,
                            pal::text_off);
   lv_label_set_text(n.offline, "OFFLINE");
   set_hidden(n.offline, true);
@@ -633,15 +633,15 @@ void FlowRenderer::build_consumer_(Node &n, bool left, int row) {
   const int ch = CONS_H - 2;
   int tx = 12;
   if (!glyph.empty()) {
-    const int ih = line_h(s.font_icon, 26);
-    const int iw = text_width(s.font_icon, glyph.c_str());
-    n.icon = this->label_(n.box, s.font_icon, 12, (ch - ih) / 2, iw + 2, LV_TEXT_ALIGN_LEFT,
+    const int ih = line_h(s.icon, 26);
+    const int iw = text_width(s.icon, glyph.c_str());
+    n.icon = this->label_(n.box, s.icon, 12, (ch - ih) / 2, iw + 2, LV_TEXT_ALIGN_LEFT,
                           pal::load);
     lv_label_set_text(n.icon, glyph.c_str());
     tx = 12 + iw + 9;
   }
-  const int nh = line_h(s.font_value, 20);
-  n.name = this->label_(n.box, s.font_value, tx, (ch - nh) / 2, CONS_W - 2 - tx - 12,
+  const int nh = line_h(s.s16, 20);
+  n.name = this->label_(n.box, s.s16, tx, (ch - nh) / 2, CONS_W - 2 - tx - 12,
                         LV_TEXT_ALIGN_LEFT, pal::text);
   lv_label_set_long_mode(n.name, LV_LABEL_LONG_MODE_DOTS);
   // `row` is the row this consumer *wants*; its objects are nevertheless built
@@ -715,12 +715,12 @@ void FlowRenderer::build_cross_(Edge &e, lv_obj_t *parent, int cx, int cy) {
   // sign fills barely half its em, so at any size it draws a mark half as big as
   // the space it occupies. An icon glyph fills its cell, which is what makes the
   // marker read at arm's length from a wall.
-  const lv_font_t *f = s.font_icon != nullptr ? s.font_icon : s.font_name;
-  const std::string mark = this->has_glyph_(s.font_icon, MDI_CLOSE_THICK)
+  const lv_font_t *f = s.icon != nullptr ? s.icon : s.s22;
+  const std::string mark = this->has_glyph_(s.icon, MDI_CLOSE_THICK)
                                ? encode_utf8(MDI_CLOSE_THICK)
                                : std::string(CROSS);
   if (mark == CROSS)
-    f = s.font_name;
+    f = s.s22;
   const int lh = line_h(f, 27);
   lv_obj_t *x = this->label_(e.cross, f, 0, (CROSS_D - lh) / 2, CROSS_D,
                              LV_TEXT_ALIGN_CENTER, pal::alert);
@@ -840,7 +840,7 @@ void FlowRenderer::build_(lv_obj_t *parent) {
     n.slot = Slot::TAP;
     n.device = d_grid;
     n.terminal = t_tap;
-    this->build_source_(n, COL_L_X, COL_L_W, pal::tap_val, s.font_sub, s.font_unit);
+    this->build_source_(n, COL_L_X, COL_L_W, pal::tap_val, s.s18, s.s14);
     lv_label_set_text(n.sub, "Load");
     this->add_node_(std::move(n));
   }
@@ -849,7 +849,7 @@ void FlowRenderer::build_(lv_obj_t *parent) {
     n.slot = Slot::GRID;
     n.device = d_grid;
     n.terminal = t_in;
-    this->build_source_(n, grid_x, grid_w, pal::grid, s.font_name, s.font_value);
+    this->build_source_(n, grid_x, grid_w, pal::grid, s.s22, s.m14);
     this->n_grid_ = this->add_node_(std::move(n));
   }
   if (has_pv) {
@@ -857,7 +857,7 @@ void FlowRenderer::build_(lv_obj_t *parent) {
     n.slot = Slot::PV;
     n.device = d_pv;
     n.terminal = t_pv;
-    this->build_source_(n, COL_R_X, COL_R_W, pal::pv, s.font_name, s.font_value);
+    this->build_source_(n, COL_R_X, COL_R_W, pal::pv, s.s20, s.m14);
     this->add_node_(std::move(n));
   }
 
@@ -1122,14 +1122,9 @@ void FlowRenderer::build_(lv_obj_t *parent) {
   // fill hides the run it sits on (§5.4).
   for (Edge &e : this->edges_) {
     lv_obj_t *host = (e.kind == Kind::CONSUMER) ? this->scroll_ : this->root_;
-    const lv_font_t *f = s.font_value;
-    int radius = BADGE_RADIUS;
-    if (e.kind == Kind::GRID) {
-      f = s.font_sub;  // 17-18 px on the row-1 grid badge
-    } else if (e.kind == Kind::BUS) {
-      f = s.font_name;  // 21 on the bus total
-      radius = BUS_BADGE_RADIUS;
-    }
+    const bool bus = e.kind == Kind::BUS;
+    const lv_font_t *f = bus ? s.m22 : s.m16;
+    const int radius = bus ? BUS_BADGE_RADIUS : BADGE_RADIUS;
     this->build_badge_(e, host, radius, f);
     e.head_state = -2;  // unwritten: the first update places the head and the stub
   }
@@ -1187,9 +1182,9 @@ void FlowRenderer::build_(lv_obj_t *parent) {
     lv_obj_set_style_border_opa(this->banner_, LV_OPA_COVER, LV_PART_MAIN);
     lv_obj_add_flag(this->banner_, LV_OBJ_FLAG_HIDDEN);
     lv_obj_t *b1 =
-        this->label_(this->banner_, s.font_value, 0, 16, bw - 2, LV_TEXT_ALIGN_CENTER, pal::alert);
+        this->label_(this->banner_, s.s16, 0, 16, bw - 2, LV_TEXT_ALIGN_CENTER, pal::alert);
     lv_label_set_text(b1, "NO LINK TO HOME ASSISTANT");
-    lv_obj_t *b2 = this->label_(this->banner_, s.font_unit, 0, 44, bw - 2, LV_TEXT_ALIGN_CENTER,
+    lv_obj_t *b2 = this->label_(this->banner_, s.s14, 0, 44, bw - 2, LV_TEXT_ALIGN_CENTER,
                                 pal::text_dim);
     lv_label_set_text(b2, "values are held; the state of the mains is unknown");
   }
@@ -1207,10 +1202,10 @@ void FlowRenderer::build_(lv_obj_t *parent) {
   ESP_LOGI(TAG, "consumers %u left / %u right, %d rows; bus %d..%d; container %d of %d%s",
            (unsigned) left.size(), (unsigned) right.size(), n_rows, (int) CORE_B,
            (int) SCROLL_Y + content_h, content_h, (int) SCROLL_H, scrolls ? " — SCROLLS" : "");
-  ESP_LOGI(TAG, "font line heights: caption %d unit %d value %d sub %d name %d metric %d icon %d",
-           line_h(s.font_caption, 0), line_h(s.font_unit, 0), line_h(s.font_value, 0),
-           line_h(s.font_sub, 0), line_h(s.font_name, 0), line_h(s.font_metric, 0),
-           line_h(s.font_icon, 0));
+  ESP_LOGI(TAG, "line heights  sans 10/14/16/18/20/22: %d %d %d %d %d %d   mono 12/14/16/22/28: %d %d %d %d %d   icon %d",
+           line_h(s.s10, 0), line_h(s.s14, 0), line_h(s.s16, 0), line_h(s.s18, 0),
+           line_h(s.s20, 0), line_h(s.s22, 0), line_h(s.m12, 0), line_h(s.m14, 0),
+           line_h(s.m16, 0), line_h(s.m22, 0), line_h(s.m28, 0), line_h(s.icon, 0));
   for (const Node &n : this->nodes_) {
     const Terminal *t = this->term_(n.terminal);
     const Device *d = this->dev_(n.device);
@@ -1322,8 +1317,8 @@ int FlowRenderer::set_metric_(lv_obj_t *num, lv_obj_t *unit, std::string &cache,
   if (num == nullptr || unit == nullptr)
     return 0;
   const PowerFlowStyle &s = this->pf_->style();
-  const int wn = text_width(s.font_metric, value.c_str());
-  const int wu = text_width(s.font_unit, suffix);
+  const int wn = text_width(s.m28, value.c_str());
+  const int wu = text_width(s.m12, suffix);
   const std::string key = value + '\x01' + suffix;
   if (cache == key)
     return wn + wu;
@@ -1333,7 +1328,7 @@ int FlowRenderer::set_metric_(lv_obj_t *num, lv_obj_t *unit, std::string &cache,
   const int x0 = centre ? x - (wn + wu) / 2 : x;
   // A big figure and a small unit only read as one number when their baselines
   // agree; the line boxes do not.
-  const int dy = baseline_of(s.font_metric, 27) - baseline_of(s.font_unit, 14);
+  const int dy = baseline_of(s.m28, 27) - baseline_of(s.m12, 14);
   lv_obj_set_pos(num, x0, y);
   lv_obj_set_pos(unit, x0 + wn, y + dy);
   return wn + wu;
@@ -1544,7 +1539,7 @@ void FlowRenderer::set_badge_(Edge &e, const std::string &txt, uint32_t line, ui
     lv_obj_set_style_text_font(e.badge_lbl, font, LV_PART_MAIN);
     // The `OFF` caption is the one letter-spaced badge in the design.
     lv_obj_set_style_text_letter_space(e.badge_lbl,
-                                       font == this->pf_->style().font_unit ? 2 : 0, LV_PART_MAIN);
+                                       font == this->pf_->style().s14 ? 2 : 0, LV_PART_MAIN);
     lv_obj_set_y(e.badge_lbl, (e.bh - 2 - line_h(font, 20)) / 2);
     e.txt_badge.clear();
   }
@@ -1638,11 +1633,9 @@ void FlowRenderer::update_edge_(Edge &e) {
   std::string txt;
   uint32_t bcol = role_val;
   int bw = e.bw;
-  const lv_font_t *bfont = s.font_value;
-  if (e.kind == Kind::GRID)
-    bfont = s.font_sub;
-  else if (e.kind == Kind::BUS)
-    bfont = s.font_name;
+  // Every badge is a number, so every badge is mono; only the bus total steps up
+  // a size (§8). The row-1 grid badge used to be its own size and no longer is.
+  const lv_font_t *bfont = e.kind == Kind::BUS ? s.m22 : s.m16;
 
   if (!ha) {
     txt = DASH;
@@ -1653,7 +1646,7 @@ void FlowRenderer::update_edge_(Edge &e) {
     txt = "OFF";
     bcol = pal::text_dim;
     bw = 66;
-    bfont = s.font_unit;
+    bfont = s.s14;  // OFF is a word
   } else if (st == EdgeState::NO_DATA) {
     txt = DASH;
     bcol = pal::text_off;
