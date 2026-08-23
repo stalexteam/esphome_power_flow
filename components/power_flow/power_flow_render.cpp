@@ -53,8 +53,8 @@ static const uint32_t pv_line = 0x7A6A32;      ///< kept per §2; the PV *edge* 
 static const uint32_t pv_border = 0x3D3A28;    ///< PV card border
 static const uint32_t batt = 0x4FD98A;         ///< SOC ring, charge badge, PV badge and dots
 static const uint32_t batt_line = 0x2E6B47;    ///< charging edge, PV edge
-static const uint32_t disch = 0xF5C452;        ///< discharge badge text and dots
-static const uint32_t disch_line = 0x7A6A32;   ///< discharging edge
+static const uint32_t discharge = 0xF5C452;        ///< discharge badge text and dots
+static const uint32_t discharge_line = 0x7A6A32;   ///< discharging edge
 static const uint32_t load = 0x7ED4F0;         ///< consumer icons, bus badges, bus dots
 static const uint32_t load_line = 0x3E7FA8;    ///< bus and consumer edges
 static const uint32_t idle_line = 0x28404F;    ///< edge at 0 W
@@ -104,7 +104,7 @@ static const int16_t BUS_BADGE_RADIUS = 10;
 static const int16_t BADGE_PAD = 12;  ///< minimum clear space around a badge's text
 
 static const int16_t HEAD_W = 10, HEAD_H = 8;
-static const int16_t CROSS_D = 36;  ///< the disc that breaks the wire
+static const int16_t CROSS_D = 48;  ///< the disc that breaks the wire
 
 /// Inside the inverter card, in *content* coordinates — the card has a 1 px
 /// border, so a child at (18, 16) is at (159, 217) on the screen. The two metric
@@ -152,6 +152,7 @@ static const uint32_t MDI_SINE_WAVE = 0x0F095B;     ///< Invertor
 static const uint32_t MDI_SUNNY = 0x0F05A8;         ///< PV
 static const uint32_t MDI_PLUG_OUTLINE = 0x0F1425;  ///< OnGrid Load, and any consumer
 static const uint32_t MDI_DOTS = 0x0F01D8;          ///< Other Load
+static const uint32_t MDI_CLOSE_THICK = 0x0F1398;   ///< the lost-contact marker
 
 /// UTF-8 for one codepoint. MDI lives in a private use plane, so these are all
 /// four bytes; the shorter branches exist so the helper is not quietly wrong if
@@ -557,11 +558,12 @@ void FlowRenderer::build_battery_(Node &n) {
   n.name = this->label_(n.box, s.font_value, 0, (244 - (CORE_Y + 1)) - 8 - nh, cw,
                         LV_TEXT_ALIGN_CENTER, pal::text);
 
-#if LV_USE_ARC
   // radius 37, stroke 6.5. LVGL centres its stroke on (size - width) / 2, so an
   // 82 px box with a 7 px arc gives r = 37.5; even numbers keep the centre on a
-  // whole pixel.
+  // whole pixel. Declared out here because the SOC labels centre on it whether
+  // or not this build has the arc widget.
   const int rd = 82, aw = 7;
+#if LV_USE_ARC
   n.ring = lv_arc_create(n.box);
   lv_obj_remove_style(n.ring, nullptr, LV_PART_KNOB);
   lv_obj_remove_flag(n.ring, LV_OBJ_FLAG_CLICKABLE);
@@ -582,11 +584,20 @@ void FlowRenderer::build_battery_(Node &n) {
   lv_obj_set_style_arc_rounded(n.ring, true, LV_PART_INDICATOR);
 #endif
 
+  // Two lines, not one: the number above, the unit smaller beneath it, the pair
+  // centred in the ring both ways. A `%` set beside the digits pushes the whole
+  // group off the ring's axis, and the ring is the one thing on this card the
+  // eye centres on. Both labels span the ring and centre their own text, so the
+  // group stays put as 9 % becomes 100 %.
   const int mh = line_h(s.font_metric, 34);
-  n.soc_num = this->label_(n.box, s.font_metric, 0, rcy - mh / 2, -1, LV_TEXT_ALIGN_LEFT,
+  const int uh = line_h(s.font_unit, 17);
+  const int gap = -5;  // metric digits carry a descender's worth of empty space
+  const int top = rcy - (mh + gap + uh) / 2;
+  n.soc_num = this->label_(n.box, s.font_metric, rcx - rd / 2, top, rd, LV_TEXT_ALIGN_CENTER,
                            pal::text);
-  n.soc_pct = this->label_(n.box, s.font_unit, 0, rcy - mh / 2, -1, LV_TEXT_ALIGN_LEFT,
-                           pal::text_dim);
+  n.soc_pct = this->label_(n.box, s.font_unit, rcx - rd / 2, top + mh + gap, rd,
+                           LV_TEXT_ALIGN_CENTER, pal::text_dim);
+  lv_label_set_text(n.soc_pct, "%");
 
   n.offline = this->label_(n.box, s.font_value, 0, rcy - nh / 2, cw, LV_TEXT_ALIGN_CENTER,
                            pal::text_off);
@@ -687,7 +698,7 @@ void FlowRenderer::build_badge_(Edge &e, lv_obj_t *parent, int radius, const lv_
                              LV_TEXT_ALIGN_CENTER, pal::text);
 }
 
-/// §6 — a 36 px disc in `bg` with an `alert` cross on it, centred on the middle
+/// §6 — a 48 px disc in `bg` with an `alert` cross on it, centred on the middle
 /// of the edge's longest run, which in every case in the spec is also where the
 /// badge sits. The disc hides the line, so the mark reads as a break in the wire
 /// rather than something drawn on top of one.
@@ -700,10 +711,20 @@ void FlowRenderer::build_cross_(Edge &e, lv_obj_t *parent, int cx, int cy) {
   lv_obj_set_style_bg_color(e.cross, lv_color_hex(pal::bg), LV_PART_MAIN);
   lv_obj_set_style_bg_opa(e.cross, LV_OPA_COVER, LV_PART_MAIN);
   lv_obj_add_flag(e.cross, LV_OBJ_FLAG_HIDDEN);
-  const int lh = line_h(s.font_name, 27);
-  lv_obj_t *x = this->label_(e.cross, s.font_name, 0, (CROSS_D - lh) / 2, CROSS_D,
+  // MDI `close-thick` rather than the × of a text face: a typographic multiply
+  // sign fills barely half its em, so at any size it draws a mark half as big as
+  // the space it occupies. An icon glyph fills its cell, which is what makes the
+  // marker read at arm's length from a wall.
+  const lv_font_t *f = s.font_icon != nullptr ? s.font_icon : s.font_name;
+  const std::string mark = this->has_glyph_(s.font_icon, MDI_CLOSE_THICK)
+                               ? encode_utf8(MDI_CLOSE_THICK)
+                               : std::string(CROSS);
+  if (mark == CROSS)
+    f = s.font_name;
+  const int lh = line_h(f, 27);
+  lv_obj_t *x = this->label_(e.cross, f, 0, (CROSS_D - lh) / 2, CROSS_D,
                              LV_TEXT_ALIGN_CENTER, pal::alert);
-  lv_label_set_text(x, CROSS);
+  lv_label_set_text(x, mark.c_str());
 }
 
 void FlowRenderer::add_edge_(Edge &&e) { this->edges_.push_back(std::move(e)); }
@@ -1438,7 +1459,7 @@ void FlowRenderer::update_node_(Node &n) {
         set_hidden(n.offline, !off);
         set_hidden(n.ring, off);
         set_hidden(n.soc_num, off);
-        set_hidden(n.soc_pct, off);
+        set_hidden(n.soc_pct, off);  // re-hidden below if the SOC itself is a dash
       }
       dead = dead || off;
       if (!off) {
@@ -1448,9 +1469,10 @@ void FlowRenderer::update_node_(Node &n) {
           snprintf(buf, sizeof(buf), "%.0f", soc);
         else
           snprintf(buf, sizeof(buf), "%s", DASH);
-        this->set_metric_(n.soc_num, n.soc_pct, n.txt_soc, buf, is_valid(soc) ? "%" : "",
-                          410 - (COL_R_X + 1),
-                          287 - (CORE_Y + 1) - line_h(s.font_metric, 34) / 2, true);
+        // Both labels are fixed-width and centre their own text, so nothing has
+        // to be re-placed as the value changes width.
+        set_text(n.soc_num, n.txt_soc, buf);
+        set_hidden(n.soc_pct, !is_valid(soc));
         const int32_t pct =
             is_valid(soc) ? (int32_t) lroundf(std::min(100.0f, std::max(0.0f, soc))) : 0;
         if (pct != n.ring_pct) {
@@ -1566,8 +1588,8 @@ void FlowRenderer::update_edge_(Edge &e) {
   // charging green, discharging amber, and the head moves with the hue, so the
   // edge says which way the energy is going twice over.
   const bool discharging = e.kind == Kind::BATTERY && active && is_valid(v) && v < 0.0f;
-  const uint32_t role_line = discharging ? pal::disch_line : e.line_col;
-  const uint32_t role_val = discharging ? pal::disch : e.val_col;
+  const uint32_t role_line = discharging ? pal::discharge_line : e.line_col;
+  const uint32_t role_val = discharging ? pal::discharge : e.val_col;
 
   const uint32_t col = active ? role_line : this->edge_line_color_(e, st);
   if (col != e.col_line) {
