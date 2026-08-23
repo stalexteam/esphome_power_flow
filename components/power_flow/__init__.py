@@ -86,6 +86,7 @@ CONF_IDLE_COLOR = "idle_color"
 CONF_INFERENCE = "inference"
 CONF_KIND = "kind"
 CONF_LABEL_FONT = "label_font"
+CONF_ICON_FONT = "icon_font"
 CONF_METER = "meter"
 CONF_MIN_DISCHARGE = "min_discharge"
 CONF_MODE = "mode"
@@ -363,6 +364,7 @@ STYLE_SCHEMA = cv.Schema(
         cv.Optional(CONF_TEXT_COLOR, default=0xFFFFFF): cv.hex_uint32_t,
         cv.Optional(CONF_VALUE_FONT): cv.use_id(font.Font),
         cv.Optional(CONF_LABEL_FONT): cv.use_id(font.Font),
+        cv.Optional(CONF_ICON_FONT): cv.use_id(font.Font),
     }
 )
 
@@ -631,7 +633,7 @@ async def _style_to_code(var, config):
     ):
         field(key, f"0x{style[key]:06X}")
 
-    for key in (CONF_VALUE_FONT, CONF_LABEL_FONT):
+    for key in (CONF_VALUE_FONT, CONF_LABEL_FONT, CONF_ICON_FONT):
         if key in style:
             fnt = await cg.get_variable(style[key])
             field(key, f"{fnt}->get_lv_font()")

@@ -31,11 +31,14 @@
 #endif
 
 #include <cmath>
+#include <memory>
 #include <string>
 #include <vector>
 
 namespace esphome {
 namespace power_flow {
+
+class FlowRenderer;
 
 static const uint8_t INVALID_INDEX = 0xFF;
 
@@ -71,6 +74,9 @@ struct PowerFlowStyle {
 #ifdef USE_LVGL
   const lv_font_t *value_font{nullptr};
   const lv_font_t *label_font{nullptr};
+  /// Material Design Icons. The panel already builds this font with a pinned
+  /// tag and an explicit glyph list; the diagram reuses it (§7).
+  const lv_font_t *icon_font{nullptr};
 #endif
 };
 
@@ -222,6 +228,9 @@ class PowerFlow : public Component {
   const Diagnostics &diagnostics() const { return this->diag_; }
   const PowerFlowStyle &style() const { return this->style_; }
   uint8_t find_device(const std::string &id) const;
+#ifdef USE_LVGL
+  lv_obj_t *parent() const { return this->parent_; }
+#endif
 
  protected:
   /// Fast path: newest raw value and switch states (§6.5).
@@ -243,6 +252,10 @@ class PowerFlow : public Component {
 
   BaselineFit baseline_;
   GridLossInference inference_;
+  /// Owned by the component but written entirely in power_flow_render.cpp, so
+  /// the drawing and the arithmetic stay in separate files. Null until setup()
+  /// and on any build without LVGL.
+  std::unique_ptr<FlowRenderer> renderer_;
 
   binary_sensor::BinarySensor *status_{nullptr};
 #ifdef USE_LVGL

@@ -147,6 +147,10 @@ void StalenessDetector::set_stale_after(ms_t stale_after) { this->stale_after_ =
 
 void StalenessDetector::set_factor(float factor) { this->factor_ = factor; }
 
+void StalenessDetector::set_dispersion_limit(float limit) {
+  this->dispersion_limit_ = (std::isfinite(limit) && limit > 0.0f) ? limit : 0.0f;
+}
+
 void StalenessDetector::set_history(size_t n) {
   if (n == 0)
     n = 1;
@@ -180,43 +184,80 @@ void StalenessDetector::on_sample(ms_t now) {
   }
 }
 
-ms_t StalenessDetector::learned_interval() const {
-  const size_t n = this->intervals_.size();
-  // Below three intervals a "median" is just the latest gap wearing a hat.
-  size_t need = this->history_ < 3 ? this->history_ : 3;
+namespace {
+
+/// Median and 90th percentile of the retained intervals, by nearest rank.
+/// Returns false while the history is too short to describe anything.
+///
+/// Both statistics come out of one sort because the dispersion test needs them
+/// together: the p90 is the timeout, the median is only there to say whether
+/// the p90 means anything.
+bool interval_quantiles(const std::vector<ms_t> &intervals, size_t history, ms_t &median, ms_t &p90) {
+  const size_t n = intervals.size();
+  // Below three intervals a quantile is just the latest gap wearing a hat.
+  size_t need = history < 3 ? history : 3;
   if (need == 0)
     need = 1;
   if (n == 0 || n < need)
-    return 0;
+    return false;
 
   ms_t buf[MAX_HISTORY];
   const size_t count = n < MAX_HISTORY ? n : MAX_HISTORY;
   for (size_t i = 0; i < count; i++)
-    buf[i] = this->intervals_[i];
+    buf[i] = intervals[i];
+  std::sort(buf, buf + count);
 
   const size_t mid = count / 2;
-  std::nth_element(buf, buf + mid, buf + count);
-  const ms_t hi = buf[mid];
-  if ((count % 2) == 1)
-    return hi;
-  const ms_t lo = *std::max_element(buf, buf + mid);
-  return static_cast<ms_t>((static_cast<uint64_t>(lo) + static_cast<uint64_t>(hi)) / 2u);
+  median = (count % 2 == 1)
+               ? buf[mid]
+               : static_cast<ms_t>((static_cast<uint64_t>(buf[mid - 1]) + buf[mid]) / 2u);
+
+  // Nearest rank: ceil(0.9 * count), in integer arithmetic.
+  const size_t rank = (9u * count + 9u) / 10u;
+  p90 = buf[rank - 1];
+  return true;
+}
+
+}  // namespace
+
+ms_t StalenessDetector::learned_interval() const {
+  ms_t median = 0, p90 = 0;
+  if (!interval_quantiles(this->intervals_, this->history_, median, p90))
+    return 0;
+  return p90;
 }
 
 ms_t StalenessDetector::effective_timeout() const {
   if (this->stale_after_ != 0)
     return this->stale_after_;
-  const ms_t median = this->learned_interval();
-  if (median == 0)
+
+  ms_t median = 0, p90 = 0;
+  if (!interval_quantiles(this->intervals_, this->history_, median, p90))
     return 0;
+
+  // An event-driven source - a Zigbee plug that publishes several times a
+  // second while its load moves and then nothing for half an hour - has a
+  // typical burst and a typical silence that differ by a factor of sixty. Its
+  // silence carries no information about its health, so the honest answer is
+  // to disarm rather than to guess at a threshold.
+  if (this->dispersion_limit_ > 0.0f && median > 0) {
+    const double spread = static_cast<double>(p90) / static_cast<double>(median);
+    if (spread > static_cast<double>(this->dispersion_limit_))
+      return 0;
+  }
+
   const double f =
-      (std::isfinite(this->factor_) && this->factor_ > 0.0f) ? static_cast<double>(this->factor_) : 3.0;
-  const double t = static_cast<double>(median) * f;
+      (std::isfinite(this->factor_) && this->factor_ > 0.0f) ? static_cast<double>(this->factor_) : 2.0;
+  const double t = static_cast<double>(p90) * f;
   if (t >= 4294967295.0)
     return 0xFFFFFFFFu;
   const ms_t v = static_cast<ms_t>(t);
   return v == 0 ? 1u : v;
 }
+
+/// A source with no timeout in force is not "fresh" - freshness is a question
+/// it cannot answer - so the renderer needs this separately from stale().
+bool StalenessDetector::armed() const { return this->effective_timeout() != 0; }
 
 bool StalenessDetector::stale(ms_t now) const {
   if (!this->seen_)

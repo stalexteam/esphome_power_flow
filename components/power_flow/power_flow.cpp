@@ -1,9 +1,11 @@
 #include "power_flow.h"
+#include "power_flow_render.h"
 
 #include "esphome/core/log.h"
 #include "esphome/core/hal.h"
 
 #include <algorithm>
+#include <cstdio>
 
 namespace esphome {
 namespace power_flow {
@@ -38,11 +40,26 @@ static int8_t default_sign(TerminalRole role) {
   }
 }
 
+/// Fallback caption for a terminal the YAML did not name. `terminals.input:`
+/// carries no `name:` in the reference config, and an unnamed edge is useless
+/// in a log line and worse on a diagram.
+static const char *role_name(TerminalRole role) {
+  switch (role) {
+    case TerminalRole::INPUT:   return "Input";
+    case TerminalRole::OUTPUT:  return "Output";
+    case TerminalRole::BATTERY: return "Battery";
+    case TerminalRole::SELF:    return "Self";
+    case TerminalRole::PV:      return "PV";
+    case TerminalRole::TAP:     return "Tap";
+    default:                    return "Edge";
+  }
+}
+
 uint8_t PowerFlow::add_terminal(uint8_t device, TerminalRole role, const std::string &name) {
   Terminal t;
   t.device = device;
   t.role = role;
-  t.name = name;
+  t.name = name.empty() ? role_name(role) : name;
   t.sign = default_sign(role);
   t.bidirectional = role == TerminalRole::BATTERY;
   this->terminals_.push_back(t);
@@ -160,6 +177,13 @@ void PowerFlow::setup() {
 
   ESP_LOGCONFIG(TAG, "power_flow: %u devices, %u terminals", (unsigned) this->devices_.size(),
                 (unsigned) this->terminals_.size());
+
+#ifdef USE_LVGL
+  if (this->parent_ != nullptr) {
+    this->renderer_ = make_unique<FlowRenderer>();
+    this->renderer_->setup(this);
+  }
+#endif
 }
 
 // ---------------------------------------------------------------------------
@@ -262,6 +286,14 @@ void PowerFlow::resolve_() {
 // ---------------------------------------------------------------------------
 
 /// How a resolved edge enters its node's balance.
+///
+/// A stale value still enters, and carries its doubt onward instead of voiding
+/// the node. §6.4 asks for a stale reading to be dimmed and flagged, not
+/// treated as zero — it says nothing about excluding it, and the first live
+/// firmware showed why that distinction matters: one Zigbee report arriving
+/// fifteen seconds late blanked every number on the page. The held value is
+/// almost certainly still about right; the honest response is to mark it, and
+/// everything solved from it, as suspect.
 static BalanceTerm term_for(const Terminal &t) {
   BalanceTerm b;
   b.sign = t.sign;
@@ -281,10 +313,7 @@ static BalanceTerm term_for(const Terminal &t) {
       break;
     default:
       b.included = true;
-      // A stale number is not a number we may balance on. §6.4 says dim it
-      // rather than zero it; §6.9 says an unmet condition yields a dash, so it
-      // enters as unknown and the node's auto becomes a dash with it.
-      b.power = t.stale ? NAN : t.value;
+      b.power = t.value;
       break;
   }
   return b;
@@ -333,12 +362,18 @@ void PowerFlow::solve_() {
       continue;
 
     BalanceResult r = solve_balance(terms.data(), terms.size(), ceiling);
+
+    // A solved value is only as trustworthy as the readings it came from.
+    bool any_stale = false;
+    for (uint8_t ti : edges)
+      any_stale = any_stale || (this->terminals_[ti].stale && !this->terminals_[ti].is_auto);
+
     for (uint8_t ti : edges) {
       Terminal &t = this->terminals_[ti];
       if (!t.is_auto)
         continue;
       t.value = r.solved ? r.value : NAN;
-      t.stale = false;
+      t.stale = any_stale;
 
       EdgeInput in;
       in.power = t.value;
@@ -487,6 +522,12 @@ static const char *state_name(EdgeState s) {
 
 void PowerFlow::loop() {
   const uint32_t now = millis();
+
+  // Animation runs every pass; the arithmetic does not. Dots need ~25 fps to
+  // read as motion, while the numbers behind them change on a 60 s average.
+  if (this->renderer_ != nullptr)
+    this->renderer_->frame(now);
+
   if ((uint32_t) (now - this->last_update_) < this->update_interval_)
     return;
   this->last_update_ = now;
@@ -496,26 +537,35 @@ void PowerFlow::loop() {
   this->solve_();
   this->derive_();
 
+  if (this->renderer_ != nullptr)
+    this->renderer_->update();
+
   // Stage 2 has no rendering on purpose: §8 wants the numbers trusted before
   // anything is drawn, so they go to the log where they can be checked against
-  // Home Assistant by hand.
+  // Home Assistant by hand. One compact line per cycle rather than one per
+  // terminal — the panel logs at INFO, and a dozen lines every ten seconds
+  // would bury everything else.
   if ((uint32_t) (now - this->last_log_) < 10000)
     return;
   this->last_log_ = now;
 
+  std::string line;
   for (const Terminal &t : this->terminals_) {
     if (!t.enabled)
       continue;
-    ESP_LOGD(TAG, "  %-14s raw=%8.1f avg=%8.1f %-6s%s", t.name.c_str(), t.raw, t.value,
-             state_name(t.state), t.stale ? " STALE" : "");
+    char buf[48];
+    snprintf(buf, sizeof(buf), "%s=%.0f/%s%s ", t.name.c_str(), t.value, state_name(t.state),
+             t.stale ? "!" : "");
+    line += buf;
   }
-  ESP_LOGI(TAG, "losses=%.1f W eff=%.3f (show %d/%d) | %.2f h remaining", this->diag_.energy.losses,
-           this->diag_.energy.efficiency, this->diag_.energy.show_losses,
-           this->diag_.energy.show_efficiency, this->diag_.runtime_hours);
-  ESP_LOGI(TAG, "supply=%d grid=%d reliable=%d ha=%d | a=%.1f b=%.4f | chg=%.3f inv=%.3f | %.2f h",
-           (int) this->diag_.supply, (int) this->diag_.grid, this->diag_.reliable,
-           this->diag_.ha_contact, this->diag_.baseline_a, this->diag_.baseline_b,
-           this->diag_.charger_eff, this->diag_.inverter_eff, this->diag_.runtime_hours);
+  ESP_LOGI(TAG, "%s", line.c_str());
+
+  const EnergyReading &e = this->diag_.energy;
+  ESP_LOGI(TAG, "losses=%.1fW%s eff=%.1f%%%s | %.2fh | supply=%d grid=%d %s%s | a=%.1f b=%+.4f",
+           e.losses, e.show_losses ? "*" : "", e.efficiency * 100.0f, e.show_efficiency ? "*" : "",
+           this->diag_.runtime_hours, (int) this->diag_.supply, (int) this->diag_.grid,
+           this->diag_.reliable ? "ok" : "UNRELIABLE", this->diag_.ha_contact ? "" : " NO-HA",
+           this->diag_.baseline_a, this->diag_.baseline_b);
 }
 
 void PowerFlow::dump_config() {
