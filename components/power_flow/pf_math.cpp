@@ -596,7 +596,7 @@ EnergyReading energy_figure(float p_in, float p_out, float p_battery, float p_pv
   // gate firing for one cycle turns a number into a dash instead of making the
   // whole row disappear and come back.
   const bool battery_known = is_valid(p_battery) && is_valid(deadband);
-  const bool at_rest = battery_known && std::fabs(p_battery) < std::fabs(deadband);
+  const bool at_rest = battery_known && std::fabs(p_battery) <= std::fabs(deadband);
   switch (mode) {
     case FigureMode::LOSSES:
       r.show_losses = true;
