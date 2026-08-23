@@ -167,8 +167,13 @@ class PowerFlow : public Component {
 
   // --- graph construction, in YAML declaration order
   uint8_t add_device(DeviceKind kind, const std::string &id, const std::string &name);
+  /// Orientation defaults from the role and is only overridden when the YAML
+  /// says so explicitly: INPUT and PV flow into their node, OUTPUT, SELF,
+  /// BATTERY and TAP flow out of it. Codegen emits set_terminal_sign() only for
+  /// an explicit `sign:` key, so getting this default right is this class's job.
   uint8_t add_terminal(uint8_t device, TerminalRole role, const std::string &name);
   /// A consumer is one terminal hanging off the bus; returns the terminal index.
+  /// Its orientation is always out of the bus.
   uint8_t add_consumer(const std::string &name, Side side);
 
   // --- attaching data to a terminal
