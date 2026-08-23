@@ -633,7 +633,11 @@ void FlowRenderer::build_consumer_(Node &n, bool left, int row) {
   n.name = this->label_(n.box, s.font_value, tx, (ch - nh) / 2, CONS_W - 2 - tx - 12,
                         LV_TEXT_ALIGN_LEFT, pal::text);
   lv_label_set_long_mode(n.name, LV_LABEL_LONG_MODE_DOTS);
-  n.row = (int8_t) row;
+  // `row` is the row this consumer *wants*; its objects are nevertheless built
+  // at row 0 and translated by resort_consumers_(). Leaving n.row at -1 is what
+  // makes that first translation happen — claiming the row here would tell the
+  // sorter the card is already in place while the pixels sat in a pile.
+  (void) row;
 }
 
 // ---------------------------------------------------------------------------
@@ -1661,9 +1665,16 @@ void FlowRenderer::update_edge_(Edge &e) {
 /// after power-up is preferable to a list that settles into the wrong order and
 /// stays there.
 void FlowRenderer::resort_consumers_() {
-  if (!this->ha_contact_)
+  // With Home Assistant gone every meter reads NaN at once, so nothing may sink:
+  // that is loss of contact, not five sockets switching off, and reshuffling the
+  // list on a network blip only to reshuffle it back is exactly the churn §4.3
+  // exists to prevent. But the *first* pass must run regardless — until it does,
+  // every card is still sitting at row 0 where it was built.
+  if (!this->ha_contact_ && this->sorted_once_)
     return;
   auto sunk = [&](uint8_t node_idx) {
+    if (!this->ha_contact_)
+      return false;
     const Terminal *t = this->term_(this->nodes_[node_idx].terminal);
     return t != nullptr && (t->state == EdgeState::OPEN || t->state == EdgeState::DE_ENERGIZED);
   };
@@ -1690,6 +1701,23 @@ void FlowRenderer::resort_consumers_() {
         row++;
       }
     }
+  }
+  // The setup dump prints where the cards were *built*, which is row 0 for all
+  // of them; this prints where they ended up. Once, because after that it only
+  // reports churn.
+  if (!this->sorted_once_) {
+    std::string line;
+    for (const std::vector<uint8_t> *col : cols) {
+      for (uint8_t idx : *col) {
+        const Node &n = this->nodes_[idx];
+        const Terminal *t = this->term_(n.terminal);
+        char buf[48];
+        snprintf(buf, sizeof(buf), "%s=row%d%s ", t != nullptr ? t->name.c_str() : "?", n.row,
+                 sunk(idx) ? "(sunk)" : "");
+        line += buf;
+      }
+    }
+    ESP_LOGI(TAG, "rows placed: %s", line.c_str());
   }
   this->sorted_once_ = true;
 }
