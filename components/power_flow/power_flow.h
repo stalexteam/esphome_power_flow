@@ -20,6 +20,7 @@
 //
 #include "pf_math.h"
 
+#include "esphome/core/automation.h"
 #include "esphome/core/component.h"
 #include "esphome/core/defines.h"
 #include "esphome/components/sensor/sensor.h"
@@ -65,12 +66,33 @@ enum class Side : uint8_t { LEFT, RIGHT };
 struct PowerFlowStyle {
   uint16_t node_width{150};
   uint16_t node_height{62};
+  /// Consumer boxes are one line — an icon and a name — so they do not need the
+  /// height a device box needs for its readings, and the space saved goes into
+  /// packing more of them onto the screen.
+  uint16_t load_height{44};
   uint16_t radius{14};
   uint32_t idle_color{0x3A4450};
   uint32_t active_color{0x4CAF50};
   uint32_t warn_color{0xE0A030};
   uint32_t dead_color{0x555F6B};
   uint32_t text_color{0xFFFFFF};
+
+  /// The node box itself. Separate from the state colours because a box's fill
+  /// and its border say "this is a device", while the state colours say "this is
+  /// what the device is doing".
+  uint32_t node_bg{0x161C24};
+  uint32_t node_border{0x2A333F};
+  /// Connectors at rest, and the pill that carries a flow figure.
+  uint32_t line_color{0xC8D2DC};
+  uint32_t badge_bg{0x1E2733};
+  uint32_t badge_text{0xFFFFFF};
+  uint16_t badge_radius{8};
+  /// Deliberately switched off, but still talking to us. Distinct from
+  /// dead_color on purpose: a ✕ means contact is lost, and an open relay that
+  /// still reports is not that (§6.1, amended after the boiler read as broken).
+  uint32_t off_color{0x6B7684};
+  /// Thickness of the battery's state-of-charge ring.
+  uint16_t ring_width{8};
 #ifdef USE_LVGL
   const lv_font_t *value_font{nullptr};
   const lv_font_t *label_font{nullptr};
@@ -131,6 +153,11 @@ struct Device {
 
   SwitchState sw{SwitchState::ABSENT};
   bool alive{true};
+
+  /// Fired when the owner taps this device's box. The component deliberately
+  /// knows nothing about LVGL pages: the YAML binds an action, so the same
+  /// component works on a panel laid out differently (§7).
+  Trigger<> *on_click{nullptr};
 };
 
 // ---------------------------------------------------------------------------
@@ -217,6 +244,7 @@ class PowerFlow : public Component {
   void set_device_capacity(uint8_t device, sensor::Sensor *capacity_ah);
   /// bus: `source: inv.output` — resolved to a terminal index by codegen.
   void set_device_source(uint8_t device, uint8_t terminal);
+  void set_device_on_click(uint8_t device, Trigger<> *trigger);
 
   // --- §6.7 inference
   void configure_inference(bool enabled, InferenceMode mode, float min_discharge, uint32_t hold_ms,

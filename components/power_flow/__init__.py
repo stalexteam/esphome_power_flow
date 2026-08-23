@@ -28,6 +28,7 @@ Section references (§) point at the specification, task.md.
 import itertools
 import re
 
+from esphome import automation
 import esphome.codegen as cg
 from esphome.components import binary_sensor, font, sensor, text_sensor
 from esphome.components.homeassistant import (
@@ -38,7 +39,13 @@ from esphome.components.homeassistant.sensor import HomeassistantSensor
 from esphome.components.homeassistant.text_sensor import HomeassistantTextSensor
 from esphome.components.lvgl.types import lv_obj_t
 import esphome.config_validation as cv
-from esphome.const import CONF_ENTITY_ID, CONF_ID, CONF_NAME, CONF_PLATFORM
+from esphome.const import (
+    CONF_ENTITY_ID,
+    CONF_ID,
+    CONF_NAME,
+    CONF_PLATFORM,
+    CONF_TRIGGER_ID,
+)
 from esphome.core import CORE
 
 CODEOWNERS = ["@stalexteam"]
@@ -62,11 +69,21 @@ UnavailablePolicy = power_flow_ns.enum("UnavailablePolicy", is_class=True)
 FigureMode = power_flow_ns.enum("FigureMode", is_class=True)
 InferenceMode = power_flow_ns.enum("InferenceMode", is_class=True)
 
+# Tapping a device box fires this, and the component deliberately knows nothing
+# about what it is bound to — the YAML decides whether that shows an LVGL page,
+# toggles something, or does nothing at all (§7). A bare `Trigger<>` rather than
+# a component-specific subclass, because `Device::on_click` in power_flow.h is
+# exactly that type; there is no C++ class here for a subclass to name.
+DeviceClickTrigger = automation.Trigger.template()
+
 # --------------------------------------------------------------------------
 # Config keys
 # --------------------------------------------------------------------------
 CONF_ACTIVE_COLOR = "active_color"
 CONF_AVERAGE_WINDOW = "average_window"
+CONF_BADGE_BG = "badge_bg"
+CONF_BADGE_RADIUS = "badge_radius"
+CONF_BADGE_TEXT = "badge_text"
 CONF_BASELINE = "baseline"
 CONF_BATTERY_DEADBAND = "battery_deadband"
 CONF_BIDIRECTIONAL = "bidirectional"
@@ -87,16 +104,23 @@ CONF_INFERENCE = "inference"
 CONF_KIND = "kind"
 CONF_LABEL_FONT = "label_font"
 CONF_ICON_FONT = "icon_font"
+CONF_LINE_COLOR = "line_color"
 CONF_METER = "meter"
 CONF_MIN_DISCHARGE = "min_discharge"
 CONF_MODE = "mode"
+CONF_NODE_BG = "node_bg"
+CONF_NODE_BORDER = "node_border"
 CONF_NODE_HEIGHT = "node_height"
+CONF_LOAD_HEIGHT = "load_height"
 CONF_NODE_WIDTH = "node_width"
+CONF_OFF_COLOR = "off_color"
+CONF_ON_CLICK = "on_click"
 CONF_PARENT_ID = "parent_id"
 CONF_POWER = "power"
 CONF_PREFER = "prefer"
 CONF_RADIUS = "radius"
 CONF_REQUIRE_STALE_GRID = "require_stale_grid"
+CONF_RING_WIDTH = "ring_width"
 CONF_SIDE = "side"
 CONF_SIGN = "sign"
 CONF_SOC = "soc"
@@ -349,6 +373,12 @@ DEVICE_SCHEMA = cv.Schema(
         cv.Optional(CONF_TERMINALS): cv.Schema(
             {cv.Optional(role): TERMINAL_SCHEMA for role in TERMINAL_ROLES}
         ),
+        # Tapping this device's box runs whatever the YAML puts here. There is
+        # deliberately no `page:` key: the component must not know what an LVGL
+        # page is, so a panel laid out differently binds something else (§7).
+        cv.Optional(CONF_ON_CLICK): automation.validate_automation(
+            {cv.GenerateID(CONF_TRIGGER_ID): cv.declare_id(DeviceClickTrigger)}
+        ),
     }
 )
 
@@ -356,12 +386,30 @@ STYLE_SCHEMA = cv.Schema(
     {
         cv.Optional(CONF_NODE_WIDTH, default=150): cv.int_range(min=1, max=65535),
         cv.Optional(CONF_NODE_HEIGHT, default=62): cv.int_range(min=1, max=65535),
+        cv.Optional(CONF_LOAD_HEIGHT, default=44): cv.int_range(1, 65535),
         cv.Optional(CONF_RADIUS, default=14): cv.int_range(min=0, max=65535),
         cv.Optional(CONF_IDLE_COLOR, default=0x3A4450): cv.hex_uint32_t,
         cv.Optional(CONF_ACTIVE_COLOR, default=0x4CAF50): cv.hex_uint32_t,
         cv.Optional(CONF_WARN_COLOR, default=0xE0A030): cv.hex_uint32_t,
         cv.Optional(CONF_DEAD_COLOR, default=0x555F6B): cv.hex_uint32_t,
         cv.Optional(CONF_TEXT_COLOR, default=0xFFFFFF): cv.hex_uint32_t,
+        # The node box itself, separate from the state colours: a box's fill and
+        # border say "this is a device", the state colours say what it is doing.
+        cv.Optional(CONF_NODE_BG, default=0x161C24): cv.hex_uint32_t,
+        cv.Optional(CONF_NODE_BORDER, default=0x2A333F): cv.hex_uint32_t,
+        # Connectors at rest, and the pill that carries a flow figure (§4).
+        cv.Optional(CONF_LINE_COLOR, default=0xC8D2DC): cv.hex_uint32_t,
+        cv.Optional(CONF_BADGE_BG, default=0x1E2733): cv.hex_uint32_t,
+        cv.Optional(CONF_BADGE_TEXT, default=0xFFFFFF): cv.hex_uint32_t,
+        cv.Optional(CONF_BADGE_RADIUS, default=8): cv.int_range(min=0, max=65535),
+        # Deliberately switched off, but still reporting. Its own key rather
+        # than a reuse of `dead_color`, because the ✕ has to mean "contact with
+        # this thing is lost" and nothing else — an open relay that still talks
+        # is not that, and drawing it as dead made the boiler look broken
+        # (§6.1, amended after seeing it on the panel).
+        cv.Optional(CONF_OFF_COLOR, default=0x6B7684): cv.hex_uint32_t,
+        # Thickness of the battery's state-of-charge ring (§7).
+        cv.Optional(CONF_RING_WIDTH, default=8): cv.int_range(min=1, max=65535),
         cv.Optional(CONF_VALUE_FONT): cv.use_id(font.Font),
         cv.Optional(CONF_LABEL_FONT): cv.use_id(font.Font),
         cv.Optional(CONF_ICON_FONT): cv.use_id(font.Font),
@@ -621,15 +669,26 @@ async def _style_to_code(var, config):
     def field(name, value):
         cg.add(cg.RawStatement(f"{var}->style().{name} = {value};"))
 
-    field("node_width", style[CONF_NODE_WIDTH])
-    field("node_height", style[CONF_NODE_HEIGHT])
-    field("radius", style[CONF_RADIUS])
+    for key in (
+        CONF_NODE_WIDTH,
+        CONF_NODE_HEIGHT, CONF_LOAD_HEIGHT,
+        CONF_RADIUS,
+        CONF_BADGE_RADIUS,
+        CONF_RING_WIDTH,
+    ):
+        field(key, style[key])
     for key in (
         CONF_IDLE_COLOR,
         CONF_ACTIVE_COLOR,
         CONF_WARN_COLOR,
         CONF_DEAD_COLOR,
         CONF_TEXT_COLOR,
+        CONF_NODE_BG,
+        CONF_NODE_BORDER,
+        CONF_LINE_COLOR,
+        CONF_BADGE_BG,
+        CONF_BADGE_TEXT,
+        CONF_OFF_COLOR,
     ):
         field(key, f"0x{style[key]:06X}")
 
@@ -718,6 +777,14 @@ async def to_code(config):
             cg.add(var.set_device_soc(index, await _new_ha_sensor(soc)))
         if (capacity := device.get(CONF_CAPACITY)) is not None:
             cg.add(var.set_device_capacity(index, await _new_ha_sensor(capacity)))
+
+        # The trigger is the whole of the component's knowledge about a tap: it
+        # fires, and the actions the YAML listed run. What they do is the
+        # panel's business, not the diagram's (§7).
+        for conf in device.get(CONF_ON_CLICK, []):
+            trigger = cg.new_Pvariable(conf[CONF_TRIGGER_ID])
+            cg.add(var.set_device_on_click(index, trigger))
+            await automation.build_automation(trigger, [], conf)
 
         for role, term in _terminals_of(device):
             t_index = terminal_index[(did, role)]

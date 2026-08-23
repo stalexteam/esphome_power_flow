@@ -114,6 +114,7 @@ void PowerFlow::set_device_voltage(uint8_t d, sensor::Sensor *v) { this->devices
 void PowerFlow::set_device_soc(uint8_t d, sensor::Sensor *s) { this->devices_[d].soc = s; }
 void PowerFlow::set_device_capacity(uint8_t d, sensor::Sensor *c) { this->devices_[d].capacity_remaining = c; }
 void PowerFlow::set_device_source(uint8_t d, uint8_t terminal) { this->devices_[d].source_terminal = terminal; }
+void PowerFlow::set_device_on_click(uint8_t d, Trigger<> *t) { this->devices_[d].on_click = t; }
 
 void PowerFlow::configure_inference(bool enabled, InferenceMode mode, float min_discharge, uint32_t hold_ms,
                                     bool require_stale_grid) {
