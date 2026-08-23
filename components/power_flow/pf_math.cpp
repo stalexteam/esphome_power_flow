@@ -113,6 +113,17 @@ float TimeWeightedAverage::average(ms_t now) const {
   return static_cast<float>(num / den);
 }
 
+float TimeWeightedAverage::average(ms_t now, ms_t span) const {
+  // The buffer is pruned to window_, so nothing older than that exists to
+  // integrate; asking for more silently gets what there is.
+  const ms_t s = span > this->window_ ? this->window_ : span;
+  double num = 0.0, den = 0.0;
+  window_sums(this->samples_, now, s, num, den);
+  if (!(den > 0.0))
+    return NOT_A_NUMBER;
+  return static_cast<float>(num / den);
+}
+
 float TimeWeightedAverage::coverage(ms_t now) const {
   if (this->window_ == 0)
     return 0.0f;

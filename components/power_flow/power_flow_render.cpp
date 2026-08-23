@@ -1575,7 +1575,11 @@ void FlowRenderer::update_edge_(Edge &e) {
   const Terminal *t = this->term_(e.terminal);
   const bool ha = this->ha_contact_;
   const EdgeState st = (t == nullptr) ? EdgeState::NO_DATA : t->state;
-  const float v = (t != nullptr) ? t->value : NAN;
+  // `display` for a measured edge, `value` for a solved one — the component
+  // fills both, and the difference is why a socket's badge tracks the kettle
+  // while `Other` and LOSS stay steady through the ten seconds it takes the two
+  // meters either side of the inverter to agree again.
+  const float v = (t != nullptr) ? t->display : NAN;
 
   const bool active = ha && st == EdgeState::ACTIVE;
   const bool open = ha && st == EdgeState::OPEN;

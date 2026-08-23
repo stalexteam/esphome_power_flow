@@ -123,6 +123,13 @@ struct Terminal {
   // --- resolved each loop
   float raw{NAN};      ///< fast path: newest combined value
   float value{NAN};    ///< slow path: averaged, or the solved value if is_auto
+  /// What the screen shows for a *measured* terminal: the same samples over a
+  /// much shorter span. The long window exists so that a difference of two
+  /// meters sampled at different instants means something; a number that is
+  /// measured and displayed directly is never subtracted, and sixty seconds of
+  /// smoothing only makes the panel look slow when a real load steps. Solved
+  /// terminals keep `value` here, because a difference is exactly what they are.
+  float display{NAN};
   bool stale{false};
   EdgeState state{EdgeState::NO_DATA};
 };
@@ -185,6 +192,9 @@ class PowerFlow : public Component {
   void set_parent(lv_obj_t *parent) { this->parent_ = parent; }
 #endif
   void set_average_window(uint32_t window_ms) { this->average_window_ = window_ms; }
+  /// Span used for the numbers on screen. Shorter than the averaging window on
+  /// purpose — see Terminal::display.
+  void set_display_window(uint32_t window_ms) { this->display_window_ = window_ms; }
   void set_idle_below(float watts) { this->idle_below_ = watts; }
   void set_update_interval(uint32_t interval_ms) { this->update_interval_ = interval_ms; }
   /// `binary_sensor: platform: status`. The only sound "HA is connected" flag —
@@ -283,6 +293,7 @@ class PowerFlow : public Component {
   lv_obj_t *parent_{nullptr};
 #endif
   uint32_t average_window_{60000};
+  uint32_t display_window_{10000};
   uint32_t update_interval_{250};
   uint32_t last_update_{0};
   uint32_t last_log_{0};

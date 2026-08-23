@@ -80,6 +80,7 @@ DeviceClickTrigger = automation.Trigger.template()
 # Config keys
 # --------------------------------------------------------------------------
 CONF_AVERAGE_WINDOW = "average_window"
+CONF_DISPLAY_WINDOW = "display_window"
 CONF_BASELINE = "baseline"
 CONF_BATTERY_DEADBAND = "battery_deadband"
 CONF_BIDIRECTIONAL = "bidirectional"
@@ -519,6 +520,13 @@ CONFIG_SCHEMA = cv.All(
             cv.Optional(
                 CONF_AVERAGE_WINDOW, default="60s"
             ): cv.positive_time_period_milliseconds,
+            # What the screen shows for a measured terminal. Much shorter than
+            # the averaging window on purpose: the long one exists so that a
+            # difference between two meters sampled at different instants means
+            # something, and a directly measured value is never subtracted.
+            cv.Optional(
+                CONF_DISPLAY_WINDOW, default="10s"
+            ): cv.positive_time_period_milliseconds,
             cv.Optional(CONF_IDLE_BELOW, default="3W"): _power,
             # Consumed by cg.register_component(), which emits
             # set_update_interval() for us.
@@ -676,6 +684,7 @@ async def to_code(config):
     parent = await cg.get_variable(config[CONF_PARENT_ID])
     cg.add(var.set_parent(parent))
     cg.add(var.set_average_window(config[CONF_AVERAGE_WINDOW]))
+    cg.add(var.set_display_window(config[CONF_DISPLAY_WINDOW]))
     cg.add(var.set_idle_below(config[CONF_IDLE_BELOW]))
     cg.add(var.set_battery_deadband(config[CONF_BATTERY_DEADBAND]))
     cg.add(var.set_figure_mode(config[CONF_FIGURE]))

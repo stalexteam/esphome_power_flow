@@ -251,27 +251,37 @@ void PowerFlow::resolve_() {
       }
     }
 
+    // Both spans come off the same buffer: the window is only an integration
+    // limit, so the short one costs nothing but a second pass.
+    const uint32_t span = this->display_window_;
     if (t.meters.empty()) {
       t.value = NAN;
+      t.display = NAN;
     } else if (t.combine == MeterCombine::PREFER) {
       t.value = NAN;
+      t.display = NAN;
       for (size_t mi = 0; mi < t.meters.size(); mi++) {
         if (is_valid(t.average[mi].last())) {
           t.value = t.average[mi].average(now);
+          t.display = t.average[mi].average(now, span);
           break;
         }
       }
     } else {
-      float sum = 0.0f;
+      float sum = 0.0f, fast = 0.0f;
       for (auto &a : t.average) {
         float v = a.average(now);
         if (!is_valid(v)) {
           sum = NAN;
+          fast = NAN;
           break;
         }
         sum += v;
+        const float f = a.average(now, span);
+        fast = is_valid(fast) && is_valid(f) ? fast + f : NAN;
       }
-      t.value = t.meters.empty() ? NAN : sum;
+      t.value = sum;
+      t.display = fast;
     }
 
     EdgeInput in;
@@ -379,6 +389,10 @@ void PowerFlow::solve_() {
       if (!t.is_auto)
         continue;
       t.value = r.solved ? r.value : NAN;
+      // A solved value *is* a difference, so it keeps the long window; showing
+      // it fast would make the kettle land on `Other` for the ten seconds
+      // between one meter reporting and the next.
+      t.display = t.value;
       t.stale = any_stale;
 
       EdgeInput in;

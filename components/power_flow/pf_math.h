@@ -56,6 +56,19 @@ class TimeWeightedAverage {
   /// NaN when nothing valid is in the window.
   float average(ms_t now) const;
 
+  /// The same over an arbitrary shorter span. One buffer answers both: the
+  /// window is only an integration limit, not a property of the samples.
+  ///
+  /// This exists because §6.5 over-applied its own rule. A common 60 s window is
+  /// what makes a *difference* meaningful — two meters sampled at different
+  /// instants cannot be subtracted — but a value that is measured directly and
+  /// displayed directly is never subtracted from anything, and needs only enough
+  /// smoothing to stop it flickering between reports. Sixty seconds of it makes
+  /// the panel visibly sluggish when a real load steps.
+  ///
+  /// A span longer than window() is clamped to it; there are no samples beyond.
+  float average(ms_t now, ms_t span) const;
+
   /// Fraction [0..1] of the window covered by a valid held value.
   float coverage(ms_t now) const;
 
