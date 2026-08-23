@@ -342,6 +342,67 @@ float inverter_efficiency(float p_out, float p_discharge, float a, const Derived
 /// minimum delta. Prefer this over the instantaneous ratios (§6.8).
 float efficiency_from_energy(float energy_out, float energy_in, float min_delta);
 
+// ---------------------------------------------------------------------------
+// §6.8, amended 2026-08-23 after measuring the installation
+// ---------------------------------------------------------------------------
+//
+// One headline figure, defined over the inverter node as a whole:
+//
+//     supplied  = max(p_in, 0) + max(-p_battery, 0) + max(p_pv, 0)
+//     delivered = max(p_out, 0) + max(p_battery, 0)
+//     losses    = supplied - delivered
+//     efficiency = delivered / supplied
+//
+// The two are exactly complementary, so the owner's choice between them is a
+// display preference and not a different calculation. Measured on this
+// installation: at rest 607 in / 509 out, discharging 532 / 478, charging
+// 2643 / (467 + 1944) — 98 W, 54 W and 232 W of loss, or 83.9 %, 89.8 % and
+// 91.2 %. All three are physical.
+//
+// Deliberately the *system* form of §6.8: the standing draw is not subtracted.
+// Field measurement showed the fitted `a` conflates the inverter's real draw
+// with a systematic offset between an EARU and a Tongou, and two AC meters
+// cannot separate those. Subtracting it produced 121 % efficiency; leaving it
+// in gives the figures above. These are indicator gauges, not instruments, and
+// the number is honestly approximate — but it is no longer impossible.
+//
+// An efficiency outside (0, max_ratio] or a negative loss still yields NONE. An
+// approximate number is acceptable; one that violates conservation of energy is
+// not, and it would cost more trust than a dash does.
+//
+// `p_in` and `p_out` follow the balance's convention exactly: 0 for an edge
+// that is physically absent, NaN for one that is present but unreadable. The
+// distinction matters — a real blackout takes the grid meter to NaN, while this
+// installation's deliberate outage left it reporting a true 0.
+//
+enum class FigureMode : uint8_t {
+  AUTO,        ///< watts while the battery rests, efficiency while it moves
+  LOSSES,      ///< always watts
+  EFFICIENCY,  ///< always a ratio
+  BOTH,        ///< both; they cost the same two numbers to compute
+};
+
+/// Both figures are always computed — they come from the same pair of sums, so
+/// there is nothing to save by skipping one. The flags say what to display; a
+/// value that is NaN shows a dash even when its flag is set.
+struct EnergyReading {
+  float losses{NAN};      ///< watts unaccounted for at the inverter node
+  float efficiency{NAN};  ///< delivered / supplied, dimensionless
+  bool show_losses{false};
+  bool show_efficiency{false};
+};
+
+/// `deadband` is the |P_battery| below which the battery counts as at rest,
+/// which is what FigureMode::AUTO switches on.
+/// `p_pv` is 0 when there are no panels, their generation when they are
+/// metered, and **NaN when their edge is `power: auto`** — a figure the solver
+/// derived from this node's own residual is not an independent measurement of
+/// it, and feeding it back would make the loss come out as zero by
+/// construction. The caller owns that distinction; here NaN simply propagates
+/// and both figures become dashes, which is the correct answer.
+EnergyReading energy_figure(float p_in, float p_out, float p_battery, float p_pv, float deadband,
+                            FigureMode mode, const DerivedGates &g);
+
 /// hours = usable_capacity x voltage x eta / load
 ///
 /// Capacity below the inverter's cutoff is unreachable, so it is removed first:

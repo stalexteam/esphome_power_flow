@@ -59,6 +59,7 @@ TerminalRole = power_flow_ns.enum("TerminalRole", is_class=True)
 MeterCombine = power_flow_ns.enum("MeterCombine", is_class=True)
 Side = power_flow_ns.enum("Side", is_class=True)
 UnavailablePolicy = power_flow_ns.enum("UnavailablePolicy", is_class=True)
+FigureMode = power_flow_ns.enum("FigureMode", is_class=True)
 InferenceMode = power_flow_ns.enum("InferenceMode", is_class=True)
 
 # --------------------------------------------------------------------------
@@ -67,14 +68,17 @@ InferenceMode = power_flow_ns.enum("InferenceMode", is_class=True)
 CONF_ACTIVE_COLOR = "active_color"
 CONF_AVERAGE_WINDOW = "average_window"
 CONF_BASELINE = "baseline"
+CONF_BATTERY_DEADBAND = "battery_deadband"
 CONF_BIDIRECTIONAL = "bidirectional"
 CONF_CAPACITY = "capacity"
 CONF_CEILING = "ceiling"
 CONF_CONSUMERS = "consumers"
 CONF_DEAD_COLOR = "dead_color"
 CONF_DEVICES = "devices"
+CONF_DISCHARGE_ETA = "discharge_eta"
 CONF_ENABLED = "enabled"
 CONF_ENERGY = "energy"
+CONF_FIGURE = "figure"
 CONF_GRID_LOSS_FROM_BATTERY = "grid_loss_from_battery"
 CONF_HOLD = "hold"
 CONF_IDLE_BELOW = "idle_below"
@@ -144,6 +148,17 @@ UNAVAILABLE_POLICIES = {
     "no_data": UnavailablePolicy.NO_DATA,
 }
 
+# The component always computes both a loss in watts and an efficiency from
+# the same pair of sums over the inverter node, and they are exactly
+# complementary (pf_math.h §6.8). `auto` shows watts while the battery rests
+# and a percentage while it charges or discharges; the rest force the choice.
+FIGURE_MODES = {
+    "auto": FigureMode.AUTO,
+    "losses": FigureMode.LOSSES,
+    "efficiency": FigureMode.EFFICIENCY,
+    "both": FigureMode.BOTH,
+}
+
 INFERENCE_MODES = {
     "suspect": InferenceMode.SUSPECT,
     "assume_offline": InferenceMode.ASSUME_OFFLINE,
@@ -155,6 +170,11 @@ INFERENCE_MODES = {
 SIGNS = {"in": 1, "out": -1}
 
 _power = cv.float_with_unit("power", "(W|w|watt|Watt|watts)?")
+
+
+def _ratio(value):
+    """A dimensionless efficiency in (0, 1]."""
+    return cv.float_range(min=0, max=1, min_included=False)(cv.float_(value))
 
 
 def _percent(value):
@@ -489,6 +509,18 @@ CONFIG_SCHEMA = cv.All(
             # connected" flag (§2).
             cv.Optional(CONF_STATUS): cv.use_id(binary_sensor.BinarySensor),
             cv.Optional(CONF_SOC_CUTOFF): _percent,
+            # |P_battery| below which the battery counts as at rest. One key,
+            # not two: it gates both the headline energy figure and the
+            # baseline fit's sampling condition (§6.6, §6.8).
+            cv.Optional(CONF_BATTERY_DEADBAND, default="15W"): _power,
+            # Which of the two complementary headline figures to display.
+            cv.Optional(CONF_FIGURE, default="auto"): cv.enum(
+                FIGURE_MODES, lower=True
+            ),
+            # No default on purpose: the runtime estimate is the most
+            # important line on the screen, and without a measured figure it
+            # must stay a dash rather than inherit a guessed 0.9 (§6.9).
+            cv.Optional(CONF_DISCHARGE_ETA): _ratio,
             cv.Optional(CONF_STYLE, default={}): STYLE_SCHEMA,
             cv.Optional(CONF_INFERENCE, default={}): INFERENCE_SCHEMA,
             cv.Required(CONF_DEVICES): cv.All(
@@ -635,8 +667,14 @@ async def to_code(config):
     cg.add(var.set_parent(parent))
     cg.add(var.set_average_window(config[CONF_AVERAGE_WINDOW]))
     cg.add(var.set_idle_below(config[CONF_IDLE_BELOW]))
+    cg.add(var.set_battery_deadband(config[CONF_BATTERY_DEADBAND]))
+    cg.add(var.set_figure_mode(config[CONF_FIGURE]))
     if (soc_cutoff := config.get(CONF_SOC_CUTOFF)) is not None:
         cg.add(var.set_soc_cutoff(soc_cutoff))
+    if (discharge_eta := config.get(CONF_DISCHARGE_ETA)) is not None:
+        # Absent, PowerFlow::discharge_eta_ stays NaN and the runtime estimate
+        # shows a dash rather than a guess (§6.9).
+        cg.add(var.set_discharge_eta(discharge_eta))
     if (status := config.get(CONF_STATUS)) is not None:
         cg.add(var.set_status_sensor(await cg.get_variable(status)))
 

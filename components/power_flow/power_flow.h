@@ -96,6 +96,7 @@ struct Terminal {
   bool learn_baseline{false}; ///< `baseline: learn` on the inverter self edge
   int8_t sign{1};             ///< orientation at its node: +1 in, -1 out
   Side side{Side::RIGHT};     ///< consumers only
+  uint32_t stale_after{0};    ///< manual override; 0 = learn the cadence
 
   // --- runtime, one entry per meter so `prefer` can fail over
   std::vector<TimeWeightedAverage> average;
@@ -136,6 +137,10 @@ struct Diagnostics {
   SupplyMode supply{SupplyMode::UNKNOWN};
   GridVerdict grid{GridVerdict::TRUSTED};
 
+  /// The single headline figure: losses in watts, or an efficiency, whichever
+  /// the battery's current behaviour makes meaningful. See energy_figure().
+  EnergyReading energy;
+
   float baseline_a{NAN};   ///< inverter standing draw, W
   float baseline_b{NAN};   ///< inter-meter calibration mismatch
   float runtime_hours{NAN};
@@ -163,6 +168,14 @@ class PowerFlow : public Component {
   /// api on_client_connected latches false and never recovers (§2).
   void set_status_sensor(binary_sensor::BinarySensor *s) { this->status_ = s; }
   void set_soc_cutoff(float pct) { this->soc_cutoff_ = pct; }
+  /// |P_battery| below which the battery counts as at rest, for both the
+  /// headline figure and the baseline fit's sampling condition.
+  void set_battery_deadband(float watts) { this->battery_deadband_ = watts; }
+  void set_figure_mode(FigureMode mode) { this->figure_mode_ = mode; }
+  /// Measured discharge efficiency for the runtime estimate. Left unset by
+  /// default on purpose: a guessed value would put a confident wrong number on
+  /// the most important line of the screen (§6.9).
+  void set_discharge_eta(float eta) { this->discharge_eta_ = eta; }
   PowerFlowStyle &style() { return this->style_; }
 
   // --- graph construction, in YAML declaration order
@@ -220,6 +233,9 @@ class PowerFlow : public Component {
   /// Baseline fit, inference, efficiencies, runtime estimate.
   void derive_();
 
+  const Terminal *find_terminal_(DeviceKind kind, TerminalRole role) const;
+  const Device *find_kind_(DeviceKind kind) const;
+
   std::vector<Device> devices_;
   std::vector<Terminal> terminals_;
   Diagnostics diag_;
@@ -235,8 +251,16 @@ class PowerFlow : public Component {
   uint32_t average_window_{60000};
   uint32_t update_interval_{250};
   uint32_t last_update_{0};
+  uint32_t last_log_{0};
   float idle_below_{3.0f};
   float soc_cutoff_{NAN};
+  float battery_deadband_{15.0f};
+  FigureMode figure_mode_{FigureMode::AUTO};
+  /// Measured discharge efficiency for the runtime estimate. Deliberately NaN:
+  /// the cross-mode measurements do not yet close, so assuming a figure here
+  /// would put a confident wrong number on the most important line of the
+  /// screen (§6.9).
+  float discharge_eta_{NAN};
 };
 
 }  // namespace power_flow

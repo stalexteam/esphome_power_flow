@@ -587,6 +587,73 @@ float efficiency_from_energy(float energy_out, float energy_in, float min_delta)
   return energy_out / energy_in;
 }
 
+EnergyReading energy_figure(float p_in, float p_out, float p_battery, float p_pv, float deadband,
+                            FigureMode mode, const DerivedGates &g) {
+  EnergyReading r;  // both values NaN until they survive their gates
+
+  // The flags describe the shape of the display and nothing else: they are set
+  // from the mode and the battery state before a single gate is consulted, so a
+  // gate firing for one cycle turns a number into a dash instead of making the
+  // whole row disappear and come back.
+  const bool battery_known = is_valid(p_battery) && is_valid(deadband);
+  const bool at_rest = battery_known && std::fabs(p_battery) < std::fabs(deadband);
+  switch (mode) {
+    case FigureMode::LOSSES:
+      r.show_losses = true;
+      break;
+    case FigureMode::EFFICIENCY:
+      r.show_efficiency = true;
+      break;
+    case FigureMode::BOTH:
+      r.show_losses = true;
+      r.show_efficiency = true;
+      break;
+    case FigureMode::AUTO:
+      // With an unreadable battery the mode cannot be chosen. Keeping the
+      // at-rest presentation leaves a labelled dash on the screen, which is the
+      // lesser of the two evils the flags exist to avoid.
+      r.show_losses = at_rest || !battery_known;
+      r.show_efficiency = battery_known && !at_rest;
+      break;
+  }
+
+  // p_in, p_out and p_pv carry the balance's convention: 0 is an edge that is
+  // not there, NaN is an edge that is there and unreadable. A real blackout
+  // gives NaN and forbids the figure; a deliberate outage with the meter still
+  // alive gives a true 0 and the node is computed from the battery alone.
+  //
+  // For p_pv that convention does double duty. Unmetered panels are `power:
+  // auto` and the solver derives their output from this node's own residual;
+  // feeding that back would drive the loss to zero by construction and produce
+  // a confident number carrying no information. The caller passes NaN, and the
+  // dash below is the honest answer.
+  if (!is_valid(p_in) || !is_valid(p_out) || !is_valid(p_pv) || !battery_known)
+    return r;
+
+  const double in = static_cast<double>(p_in);
+  const double out = static_cast<double>(p_out);
+  const double batt = static_cast<double>(p_battery);
+  const double pv = static_cast<double>(p_pv);
+  const double supplied = (in > 0.0 ? in : 0.0) + (batt < 0.0 ? -batt : 0.0) + (pv > 0.0 ? pv : 0.0);
+  const double delivered = (out > 0.0 ? out : 0.0) + (batt > 0.0 ? batt : 0.0);
+
+  // One gate for both figures: below a real flow the difference of two meters
+  // is their disagreement, not the inverter.
+  if (!(supplied >= static_cast<double>(g.min_flow)) || !(supplied > 0.0))
+    return r;
+
+  const double losses = supplied - delivered;
+  if (std::isfinite(losses) && losses >= 0.0)
+    r.losses = static_cast<float>(losses);  // a negative loss is beyond physics
+
+  const double efficiency = delivered / supplied;
+  if (std::isfinite(efficiency) && efficiency > 0.0 &&
+      efficiency <= static_cast<double>(g.max_ratio))
+    r.efficiency = static_cast<float>(efficiency);
+
+  return r;
+}
+
 float runtime_hours(float capacity_remaining_ah, float voltage, float eta, float load_w, float soc,
                     float soc_cutoff) {
   if (!is_valid(capacity_remaining_ah) || !is_valid(voltage) || !is_valid(eta) || !is_valid(load_w) ||
