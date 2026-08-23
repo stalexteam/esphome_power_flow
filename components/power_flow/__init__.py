@@ -128,6 +128,26 @@ CONF_F_M28 = "m28"
 CONF_F_M72 = "m72"
 CONF_F_ICON = "icon"
 CONF_ICON = "icon"
+CONF_DETAILS = "details"
+CONF_CHARGE_STATUS = "charge_status"
+CONF_CURRENT = "current"
+CONF_POWER_SENSOR = "power_sensor"
+CONF_CAPACITY_TOTAL = "capacity_total"
+CONF_CYCLES = "cycles"
+CONF_CELL_DELTA = "cell_delta"
+CONF_BALANCING = "balancing"
+CONF_ENERGY_CHARGED = "energy_charged"
+CONF_ENERGY_DISCHARGED = "energy_discharged"
+CONF_ERRORS = "errors"
+CONF_TEMPERATURES = "temperatures"
+CONF_CELLS = "cells"
+CONF_PREFIX = "prefix"
+CONF_COUNT = "count"
+CONF_LABEL = "label"
+CONF_HIGHLIGHT_ABOVE = "highlight_above"
+CONF_SENSOR = "sensor"
+CONF_BATTERY_PARENT_ID = "battery_parent_id"
+CONF_ON_BACK = "on_back"
 CONF_SUM = "sum"
 CONF_SWITCH = "switch"
 CONF_TERMINALS = "terminals"
@@ -338,6 +358,57 @@ CONSUMER_SCHEMA = cv.All(
 
 
 # --------------------------------------------------------------------------
+# The battery screen's data (DEV/UI/BATTERY_UI_SPEC.md)
+#
+# Temperatures are labelled because the pack decides what each one measures, not
+# the component: this BMS exposes five and the screen shows three. Cells are a
+# prefix and a count rather than a list, because the ids follow a pattern and a
+# sixteen-cell pack should not cost sixteen lines — but an explicit list stays
+# available for packs whose ids do not.
+# --------------------------------------------------------------------------
+def _cells(value):
+    if isinstance(value, list):
+        return [_ha_sensor(v) for v in value]
+    value = cv.Schema(
+        {
+            cv.Required(CONF_PREFIX): cv.string_strict,
+            cv.Required(CONF_COUNT): cv.int_range(min=1, max=32),
+        }
+    )(value)
+    return [
+        _ha_sensor(f"{value[CONF_PREFIX]}{i}") for i in range(1, value[CONF_COUNT] + 1)
+    ]
+
+
+DETAILS_SCHEMA = cv.Schema(
+    {
+        cv.Optional(CONF_CHARGE_STATUS): _ha_text_sensor,
+        cv.Optional(CONF_ERRORS): _ha_text_sensor,
+        cv.Optional(CONF_CURRENT): _ha_sensor,
+        cv.Optional(CONF_POWER_SENSOR): _ha_sensor,
+        cv.Optional(CONF_CAPACITY_TOTAL): _ha_sensor,
+        cv.Optional(CONF_CYCLES): _ha_sensor,
+        cv.Optional(CONF_CELL_DELTA): _ha_sensor,
+        cv.Optional(CONF_BALANCING): _ha_sensor,
+        cv.Optional(CONF_ENERGY_CHARGED): _ha_sensor,
+        cv.Optional(CONF_ENERGY_DISCHARGED): _ha_sensor,
+        cv.Optional(CONF_TEMPERATURES): cv.ensure_list(
+            cv.Schema(
+                {
+                    cv.Required(CONF_LABEL): cv.string,
+                    cv.Required(CONF_SENSOR): _ha_sensor,
+                }
+            )
+        ),
+        cv.Optional(CONF_CELLS): _cells,
+        # A spread this small is noise, and a highlight that is always on is not
+        # a highlight. Millivolts, because that is what the screen shows.
+        cv.Optional(CONF_HIGHLIGHT_ABOVE, default=10.0): cv.positive_float,
+    }
+)
+
+
+# --------------------------------------------------------------------------
 # Devices
 # --------------------------------------------------------------------------
 def _terminal_ref(value):
@@ -365,6 +436,7 @@ DEVICE_SCHEMA = cv.Schema(
         cv.Optional(CONF_SWITCH): _ha_text_sensor,
         cv.Optional(CONF_SOC): _ha_sensor,
         cv.Optional(CONF_CAPACITY): _ha_sensor,
+        cv.Optional(CONF_DETAILS): DETAILS_SCHEMA,
         cv.Optional(CONF_SOURCE): _terminal_ref,
         # Sugar for a plain device meter: it becomes a GENERIC terminal. Needed
         # when a `tap:` hangs off the node (§5).
@@ -529,6 +601,12 @@ CONFIG_SCHEMA = cv.All(
             # An empty `obj` declared on the LVGL page — the only coupling to
             # the page layout (§8).
             cv.Required(CONF_PARENT_ID): cv.use_id(lv_obj_t),
+            # The battery screen's root, on its own page. Optional: a panel that
+            # does not want a second screen simply omits it.
+            cv.Optional(CONF_BATTERY_PARENT_ID): cv.use_id(lv_obj_t),
+            cv.Optional(CONF_ON_BACK): automation.validate_automation(
+                {cv.GenerateID(CONF_TRIGGER_ID): cv.declare_id(DeviceClickTrigger)}
+            ),
             cv.Optional(
                 CONF_AVERAGE_WINDOW, default="60s"
             ): cv.positive_time_period_milliseconds,
@@ -576,6 +654,40 @@ CONFIG_SCHEMA = cv.All(
 # --------------------------------------------------------------------------
 # Codegen
 # --------------------------------------------------------------------------
+async def _details_to_code(var, index, det):
+    """The battery screen's entities. Everything is optional: a pack that
+    reports none of it still draws, with dashes where the numbers would be."""
+    SIMPLE = (
+        (CONF_CURRENT, "current"),
+        (CONF_POWER_SENSOR, "power"),
+        (CONF_CAPACITY_TOTAL, "capacity_total"),
+        (CONF_CYCLES, "cycles"),
+        (CONF_CELL_DELTA, "cell_delta"),
+        (CONF_BALANCING, "balancing"),
+        (CONF_ENERGY_CHARGED, "energy_charged"),
+        (CONF_ENERGY_DISCHARGED, "energy_discharged"),
+    )
+    for key, field in SIMPLE:
+        if (conf := det.get(key)) is not None:
+            ent = await _new_ha_sensor(conf)
+            cg.add(cg.RawStatement(f"{var}->details({index}).{field} = {ent};"))
+    for key, field in ((CONF_CHARGE_STATUS, "charge_status"), (CONF_ERRORS, "errors")):
+        if (conf := det.get(key)) is not None:
+            ent = await _new_ha_text_sensor(conf)
+            cg.add(cg.RawStatement(f"{var}->details({index}).{field} = {ent};"))
+    for t in det.get(CONF_TEMPERATURES, []):
+        ent = await _new_ha_sensor(t[CONF_SENSOR])
+        cg.add(var.add_device_temperature(index, t[CONF_LABEL], ent))
+    for cell in det.get(CONF_CELLS, []):
+        cg.add(var.add_device_cell(index, await _new_ha_sensor(cell)))
+    cg.add(
+        cg.RawStatement(
+            f"{var}->details({index}).highlight_above_mv = "
+            f"{det[CONF_HIGHLIGHT_ABOVE]:.1f}f;"
+        )
+    )
+
+
 async def _new_ha_sensor(conf):
     var = await sensor.new_sensor(conf)
     await cg.register_component(var, conf)
@@ -694,6 +806,12 @@ async def to_code(config):
 
     parent = await cg.get_variable(config[CONF_PARENT_ID])
     cg.add(var.set_parent(parent))
+    if (bp := config.get(CONF_BATTERY_PARENT_ID)) is not None:
+        cg.add(var.set_battery_parent(await cg.get_variable(bp)))
+    for conf in config.get(CONF_ON_BACK, []):
+        trigger = cg.new_Pvariable(conf[CONF_TRIGGER_ID])
+        cg.add(var.set_on_back(trigger))
+        await automation.build_automation(trigger, [], conf)
     cg.add(var.set_average_window(config[CONF_AVERAGE_WINDOW]))
     cg.add(var.set_display_window(config[CONF_DISPLAY_WINDOW]))
     cg.add(var.set_idle_below(config[CONF_IDLE_BELOW]))
@@ -746,6 +864,8 @@ async def to_code(config):
             cg.add(var.set_device_voltage(index, await _new_ha_sensor(voltage)))
         if (soc := device.get(CONF_SOC)) is not None:
             cg.add(var.set_device_soc(index, await _new_ha_sensor(soc)))
+        if (det := device.get(CONF_DETAILS)) is not None:
+            await _details_to_code(var, index, det)
         if (capacity := device.get(CONF_CAPACITY)) is not None:
             cg.add(var.set_device_capacity(index, await _new_ha_sensor(capacity)))
 

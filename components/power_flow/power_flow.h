@@ -34,12 +34,14 @@
 #include <cmath>
 #include <memory>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace esphome {
 namespace power_flow {
 
 class FlowRenderer;
+class BatteryScreen;
 
 static const uint8_t INVALID_INDEX = 0xFF;
 
@@ -155,6 +157,42 @@ struct Terminal {
   EdgeState state{EdgeState::NO_DATA};
 };
 
+/// Everything the battery screen reads (DEV/UI/BATTERY_UI_SPEC.md). Kept apart
+/// from `Device` because it is a second screen's worth of data that the diagram
+/// never touches, and because most installations will configure none of it.
+///
+/// Three things the real BMS does that the spec's table does not say:
+///   `delta` arrives in volts and is displayed in millivolts;
+///   `errors` is an empty string when there are none, not the words "No errors";
+///   `balancing` is a number, so OFF is our reading of zero rather than a state
+///   the BMS reports.
+struct BatteryDetails {
+  text_sensor::TextSensor *charge_status{nullptr};  ///< "Bulk" -> BULK in the ring
+  text_sensor::TextSensor *errors{nullptr};         ///< empty means no errors
+  sensor::Sensor *current{nullptr};
+  sensor::Sensor *power{nullptr};                   ///< signed, + charging
+  sensor::Sensor *capacity_total{nullptr};
+  sensor::Sensor *cycles{nullptr};
+  sensor::Sensor *cell_delta{nullptr};              ///< volts in, millivolts out
+  sensor::Sensor *balancing{nullptr};
+  sensor::Sensor *energy_charged{nullptr};
+  sensor::Sensor *energy_discharged{nullptr};
+
+  /// Labelled because the pack decides what they measure, not the component:
+  /// this BMS exposes five and the screen shows the three worth a glance.
+  std::vector<std::pair<std::string, sensor::Sensor *>> temperatures;
+
+  /// One per cell, in pack order. The count is configured and never assumed:
+  /// the protocol takes up to 32, this pack has 8, and subscribing to all 32
+  /// would leave 24 permanently unavailable — exactly the "dead versus no data"
+  /// confusion §6.3 exists to prevent.
+  std::vector<sensor::Sensor *> cells;
+  /// Below this spread the min/max highlight is suppressed: at 1 mV a healthy
+  /// pack would carry two coloured cells every day of its life, and a warning
+  /// that is always on is not a warning.
+  float highlight_above_mv{10.0f};
+};
+
 struct Device {
   std::string id;
   std::string name;
@@ -176,6 +214,9 @@ struct Device {
   /// knows nothing about LVGL pages: the YAML binds an action, so the same
   /// component works on a panel laid out differently (§7).
   Trigger<> *on_click{nullptr};
+
+  /// Present only on the battery, and only when the owner configured it.
+  std::unique_ptr<BatteryDetails> details;
 };
 
 // ---------------------------------------------------------------------------
@@ -211,6 +252,14 @@ class PowerFlow : public Component {
   // --- global configuration
 #ifdef USE_LVGL
   void set_parent(lv_obj_t *parent) { this->parent_ = parent; }
+  /// The second screen's root, an empty `obj` on its own LVGL page. Optional:
+  /// without it the battery screen is simply not built.
+  void set_battery_parent(lv_obj_t *parent) { this->battery_parent_ = parent; }
+  lv_obj_t *battery_parent() const { return this->battery_parent_; }
+  /// Fired by the battery screen's `Back` button. The component does not know
+  /// what a page is; the YAML binds the action.
+  void set_on_back(Trigger<> *t) { this->on_back_ = t; }
+  Trigger<> *on_back() const { return this->on_back_; }
 #endif
   void set_average_window(uint32_t window_ms) { this->average_window_ = window_ms; }
   /// Span used for the numbers on screen. Shorter than the averaging window on
@@ -270,6 +319,11 @@ class PowerFlow : public Component {
   void set_device_source(uint8_t device, uint8_t terminal);
   void set_device_on_click(uint8_t device, Trigger<> *trigger);
 
+  // --- the battery screen's data (DEV/UI/BATTERY_UI_SPEC.md)
+  BatteryDetails &details(uint8_t device);
+  void add_device_temperature(uint8_t device, const std::string &label, sensor::Sensor *s);
+  void add_device_cell(uint8_t device, sensor::Sensor *s);
+
   // --- §6.7 inference
   void configure_inference(bool enabled, InferenceMode mode, float min_discharge, uint32_t hold_ms,
                            bool require_stale_grid);
@@ -308,10 +362,13 @@ class PowerFlow : public Component {
   /// the drawing and the arithmetic stay in separate files. Null until setup()
   /// and on any build without LVGL.
   std::unique_ptr<FlowRenderer> renderer_;
+  std::unique_ptr<BatteryScreen> battery_;
 
   binary_sensor::BinarySensor *status_{nullptr};
 #ifdef USE_LVGL
   lv_obj_t *parent_{nullptr};
+  lv_obj_t *battery_parent_{nullptr};
+  Trigger<> *on_back_{nullptr};
 #endif
   uint32_t average_window_{60000};
   uint32_t display_window_{10000};

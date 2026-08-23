@@ -1,11 +1,13 @@
 #include "power_flow.h"
 #include "power_flow_render.h"
+#include "battery_render.h"
 
 #include "esphome/core/log.h"
 #include "esphome/core/hal.h"
 
 #include <algorithm>
 #include <cstdio>
+#include <utility>
 
 namespace esphome {
 namespace power_flow {
@@ -23,7 +25,9 @@ uint8_t PowerFlow::add_device(DeviceKind kind, const std::string &id, const std:
   d.kind = kind;
   d.id = id;
   d.name = name;
-  this->devices_.push_back(d);
+  // Device owns a unique_ptr now, so it is move-only; the implicit move is
+  // noexcept, which is what lets the vector grow.
+  this->devices_.push_back(std::move(d));
   return static_cast<uint8_t>(this->devices_.size() - 1);
 }
 
@@ -119,6 +123,19 @@ void PowerFlow::set_device_capacity(uint8_t d, sensor::Sensor *c) { this->device
 void PowerFlow::set_device_source(uint8_t d, uint8_t terminal) { this->devices_[d].source_terminal = terminal; }
 void PowerFlow::set_device_on_click(uint8_t d, Trigger<> *t) { this->devices_[d].on_click = t; }
 
+BatteryDetails &PowerFlow::details(uint8_t d) {
+  Device &dev = this->devices_[d];
+  if (dev.details == nullptr)
+    dev.details = make_unique<BatteryDetails>();
+  return *dev.details;
+}
+
+void PowerFlow::add_device_temperature(uint8_t d, const std::string &label, sensor::Sensor *s) {
+  this->details(d).temperatures.emplace_back(label, s);
+}
+
+void PowerFlow::add_device_cell(uint8_t d, sensor::Sensor *s) { this->details(d).cells.push_back(s); }
+
 void PowerFlow::configure_inference(bool enabled, InferenceMode mode, float min_discharge, uint32_t hold_ms,
                                     bool require_stale_grid) {
   this->inference_.set_enabled(enabled);
@@ -186,6 +203,10 @@ void PowerFlow::setup() {
   if (this->parent_ != nullptr) {
     this->renderer_ = make_unique<FlowRenderer>();
     this->renderer_->setup(this);
+  }
+  if (this->battery_parent_ != nullptr) {
+    this->battery_ = make_unique<BatteryScreen>();
+    this->battery_->setup(this);
   }
 #endif
 }
@@ -559,6 +580,8 @@ void PowerFlow::loop() {
 
   if (this->renderer_ != nullptr)
     this->renderer_->update();
+  if (this->battery_ != nullptr)
+    this->battery_->update();
 
   // Stage 2 has no rendering on purpose: §8 wants the numbers trusted before
   // anything is drawn, so they go to the log where they can be checked against
