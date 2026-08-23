@@ -10,13 +10,17 @@ namespace {
 
 constexpr float NOT_A_NUMBER = std::numeric_limits<float>::quiet_NaN();
 
-/// Elapsed milliseconds across the ~49.7-day millis() wrap. A timestamp that
-/// looks more than half a counter ahead of `now` is an out-of-order call, not a
-/// wrap, and is clamped to zero rather than turned into 24 days of history.
-inline ms_t elapsed(ms_t now, ms_t then) {
-  const ms_t d = now - then;
-  return (d & 0x80000000u) != 0u ? 0u : d;
-}
+/// Elapsed milliseconds across the ~49.7-day millis() wrap. Plain unsigned
+/// subtraction, deliberately.
+///
+/// The tempting refinement is to treat an age of half a counter or more as an
+/// out-of-order call and clamp it to zero. That trade is the wrong way round:
+/// it also reads a genuinely ancient sample - anything past 24.8 days - as
+/// having just arrived, so a source silent for a month looks fresh and its
+/// value goes on the wall. Without the clamp, a sample that really did arrive
+/// backwards reads as nearly 49 days old instead, and every consumer of this
+/// number treats "very old" as "do not trust", which is the safe direction.
+inline ms_t elapsed(ms_t now, ms_t then) { return now - then; }
 
 /// Walks the sample list once and returns the time-weighted numerator and the
 /// duration that carried a valid value. Both average() and coverage() need it;
@@ -238,19 +242,22 @@ EdgeState evaluate_edge(const EdgeInput &in) {
   // Row order is the specification (§6.1) and first match wins. Availability is
   // decided on the raw sample, never on the average: a 60 s window must not
   // delay a cross by a minute.
-  if (in.has_meter) {
-    if (!in.meter_available) {
-      return in.on_unavailable == UnavailablePolicy::NO_DATA ? EdgeState::NO_DATA
-                                                             : EdgeState::DE_ENERGIZED;
-    }
-  } else if (!is_valid(in.power)) {
+  if (in.has_meter && !in.meter_available) {
+    return in.on_unavailable == UnavailablePolicy::NO_DATA ? EdgeState::NO_DATA
+                                                           : EdgeState::DE_ENERGIZED;
+  }
+
+  // Row 2 of the table, and it outranks every row below it: an edge whose
+  // breaker is explicitly off is open whether or not anyone solved for it.
+  // ABSENT / UNKNOWN still mean closed (decision log #6).
+  if (in.sw == SwitchState::OFF)
+    return EdgeState::OPEN;
+
+  if (!in.has_meter && !is_valid(in.power)) {
     // A pure `auto` edge with no solution: a dash. It is emphatically not
     // de-energized — the balance failed, the wire did not.
     return EdgeState::NO_DATA;
   }
-
-  if (in.sw == SwitchState::OFF)
-    return EdgeState::OPEN;  // ABSENT / UNKNOWN mean closed (decision log #6)
 
   // Flow above the threshold proves the contact is closed. Zero proves nothing,
   // which is why the fall-through is IDLE and carries no cross.
@@ -275,6 +282,7 @@ BalanceResult solve_balance(const BalanceTerm *terms, size_t n, float ceiling) {
   r.value = NOT_A_NUMBER;
   r.solved = false;
   r.plausible = false;
+  r.residual = NOT_A_NUMBER;
 
   if (terms == nullptr)
     n = 0;
@@ -287,6 +295,26 @@ BalanceResult solve_balance(const BalanceTerm *terms, size_t n, float ceiling) {
       auto_i = i;
     }
   }
+
+  // The residual is computed before any fault can return early: when nothing
+  // solves, it is the only thing that tells the caller whether the node missed
+  // by 2 W or by 900.
+  double sum = 0.0;
+  bool sum_known = true;
+  for (size_t i = 0; i < n; i++) {
+    const BalanceTerm &t = terms[i];
+    if (t.is_auto || !t.included)
+      continue;  // the unknown does not contribute, and an absent edge is exactly 0
+    if (!is_valid(t.power)) {
+      // Present but unreadable. Zeroing it here is what would invent load.
+      sum_known = false;
+      break;
+    }
+    sum += (t.sign < 0 ? -1.0 : 1.0) * static_cast<double>(t.power);
+  }
+  if (sum_known && std::isfinite(sum))
+    r.residual = static_cast<float>(sum);
+
   if (auto_count == 0) {
     r.fault = BalanceFault::NO_AUTO;
     return r;
@@ -295,22 +323,19 @@ BalanceResult solve_balance(const BalanceTerm *terms, size_t n, float ceiling) {
     r.fault = BalanceFault::MULTIPLE_AUTO;
     return r;
   }
-
-  double sum = 0.0;
-  for (size_t i = 0; i < n; i++) {
-    // `included` describes a contribution, and the unknown does not contribute;
-    // it is solved for whatever the flag says.
-    if (i == auto_i)
-      continue;
-    const BalanceTerm &t = terms[i];
-    if (!t.included)
-      continue;  // physically absent: exactly 0, and the node still solves
-    if (!is_valid(t.power)) {
-      // Present but unreadable. Zeroing it here is what would invent load.
-      r.fault = BalanceFault::MISSING_INPUT;
-      return r;
-    }
-    sum += (t.sign < 0 ? -1.0 : 1.0) * static_cast<double>(t.power);
+  if (!terms[auto_i].included) {
+    // The unknown edge is itself open or dead, so it carries exactly 0 - that
+    // much is known. Solving anyway would push the whole imbalance of the node
+    // through a breaker that is standing open: unmetered PV generating at
+    // night. Whatever the rest fails to cancel is in `residual`, where it can
+    // be attributed to the meter that is actually wrong.
+    r.value = 0.0f;
+    r.fault = BalanceFault::AUTO_EXCLUDED;
+    return r;
+  }
+  if (!sum_known || !std::isfinite(sum)) {
+    r.fault = BalanceFault::MISSING_INPUT;
+    return r;
   }
 
   const double s_auto = terms[auto_i].sign < 0 ? -1.0 : 1.0;
@@ -319,8 +344,11 @@ BalanceResult solve_balance(const BalanceTerm *terms, size_t n, float ceiling) {
     r.fault = BalanceFault::MISSING_INPUT;
     return r;
   }
-  if (v < 0.0 && v > -BALANCE_EPSILON)
-    v = 0.0;  // cancellation noise, not a negative remainder
+  // Cancellation noise, not a negative remainder. The `<= 0` also normalises
+  // the -0.0 that an exactly balanced node with an inflowing auto edge yields:
+  // it is not less than zero, and it renders as "-0 W".
+  if (v <= 0.0 && v > -BALANCE_EPSILON)
+    v = 0.0;
 
   r.value = static_cast<float>(v);
   r.solved = true;
@@ -329,7 +357,11 @@ BalanceResult solve_balance(const BalanceTerm *terms, size_t n, float ceiling) {
     r.fault = BalanceFault::NEGATIVE;
     return r;
   }
-  if (is_valid(ceiling) && ceiling >= 0.0f && v > static_cast<double>(ceiling)) {
+  // A negative ceiling is a configuration error the schema rejects; here it
+  // means "no ceiling", explicitly. The other reading - that everything exceeds
+  // it - would flag a healthy diagram unreliable forever.
+  const bool has_ceiling = is_valid(ceiling) && ceiling >= 0.0f;
+  if (has_ceiling && v > static_cast<double>(ceiling)) {
     r.fault = BalanceFault::ABOVE_CEILING;
     return r;
   }
@@ -361,13 +393,19 @@ bool BaselineFit::add_sample(float p_in, float p_out, float p_battery) {
   const double x = static_cast<double>(p_out);
   const double y = static_cast<double>(p_in) - x;
 
-  // Inverse to throughput: at 1 kW this is 1050 minus 1000 with meters good to
-  // ~1%, so a high-load sample is nearly worthless next to a low-load one.
+  // Inverse to throughput squared. Each meter is accurate to a percentage of
+  // its own reading, so the absolute error on the difference grows linearly
+  // with P_out and its variance grows as P_out^2; weighting by 1/variance is
+  // what makes the fit minimum-variance. A linear 1/P under-punishes a 1.5 kW
+  // sample by a factor of thirty against a 50 W one. The floor keeps the weight
+  // finite at zero throughput and stands in for the constant noise term the
+  // meters also have.
   const double floor_w = (is_valid(this->weight_floor_) && this->weight_floor_ > 0.0f)
                              ? static_cast<double>(this->weight_floor_)
                              : 1.0;
   const double mag = std::fabs(x);
-  const double w = 1.0 / (mag > floor_w ? mag : floor_w);
+  const double scale = mag > floor_w ? mag : floor_w;
+  const double w = 1.0 / (scale * scale);
 
   this->sw_ += w;
   this->swx_ += w * x;
@@ -562,7 +600,9 @@ float runtime_hours(float capacity_remaining_ah, float voltage, float eta, float
     return NOT_A_NUMBER;
   // At or below the cutoff the remaining charge is unreachable, so there is no
   // number to show — not a small one (§6.9).
-  if (soc_cutoff < 0.0f || !(soc > 0.0f) || !(soc > soc_cutoff))
+  // A SOC outside 0..100 is a broken sensor, not a very full battery: taking
+  // 150% at face value hands back a runtime the pack cannot deliver.
+  if (soc_cutoff < 0.0f || !(soc > 0.0f) || soc > 100.0f || !(soc > soc_cutoff))
     return NOT_A_NUMBER;
 
   const double usable_ah = static_cast<double>(capacity_remaining_ah) *

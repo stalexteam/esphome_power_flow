@@ -199,6 +199,9 @@ enum class BalanceFault : uint8_t {
   MISSING_INPUT,  ///< an included term is NaN
   NEGATIVE,       ///< solved below zero — inputs are bad
   ABOVE_CEILING,  ///< solved above the plausible maximum
+  AUTO_EXCLUDED,  ///< the auto edge is itself open or dead: it carries 0, and
+                  ///< whatever the other terms fail to cancel is somebody
+                  ///< else's error, not this edge's flow
 };
 
 struct BalanceResult {
@@ -206,10 +209,15 @@ struct BalanceResult {
   bool solved{false};
   bool plausible{false};  ///< false ⇒ flag the diagram unreliable, do not draw
   BalanceFault fault{BalanceFault::NONE};
+  /// Signed sum of the included known terms — what the auto edge has to cancel
+  /// for the node to close. Meaningful even when nothing was solved, which is
+  /// the only way to tell a small inconsistency from a large one.
+  float residual{NAN};
 };
 
-/// `ceiling` is the largest physically plausible magnitude for the auto edge,
-/// or NaN for no ceiling. A result outside [0, ceiling] is still returned so
+/// `ceiling` is the largest physically plausible magnitude for the auto edge.
+/// NaN means no ceiling; so does a negative value, which is a config error the
+/// schema rejects and this only tolerates as defence in depth. A result outside [0, ceiling] is still returned so
 /// the caller can log it, but `plausible` is false.
 BalanceResult solve_balance(const BalanceTerm *terms, size_t n, float ceiling);
 
