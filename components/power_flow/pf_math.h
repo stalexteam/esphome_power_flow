@@ -275,6 +275,18 @@ class BaselineFit {
   void set_deadband(float watts);      ///< |P_battery| below this = at rest
   void set_min_samples(size_t n);
   void set_weight_floor(float watts);  ///< clamp for the 1/P weight at P -> 0
+  /// Weighted standard deviation of P_out, as a fraction of its weighted mean,
+  /// below which the fit refuses to call itself valid. Default 0.25.
+  ///
+  /// Two coefficients cannot be separated from a narrow cluster: the line
+  /// through it is right where the data is and nonsense everywhere else. On
+  /// this installation a whole day of history spans 0.545, while the median
+  /// rolling hour spans 0.108 — and an hour of steady load is exactly when the
+  /// fit was seen reporting a 530 W standing draw with a slope of -0.96.
+  ///
+  /// The existing absolute floor stays: it catches the degenerate case where
+  /// every sample is identical, which no relative test can see.
+  void set_min_spread(float fraction);
 
   /// Returns true if the sample was accepted. Rejection is normal and silent.
   bool add_sample(float p_in, float p_out, float p_battery);
@@ -296,6 +308,7 @@ class BaselineFit {
   size_t min_samples_{30};
   float deadband_{15.0f};
   float weight_floor_{50.0f};
+  float min_spread_{0.25f};
 };
 
 // ---------------------------------------------------------------------------

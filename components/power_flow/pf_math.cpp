@@ -475,8 +475,25 @@ bool BaselineFit::valid() const {
     return false;
   const double mean_x = this->swx_ / this->sw_;
   const double var_x = this->swxx_ / this->sw_ - mean_x * mean_x;
-  return var_x > MIN_X_VARIANCE;
+  if (!(var_x > MIN_X_VARIANCE))
+    return false;
+
+  // The absolute floor above catches a cluster with no spread at all; this
+  // catches one whose spread is real but small next to where it sits, which is
+  // the case that actually happens. Two coefficients cannot be separated from
+  // samples that all live at nearly the same throughput: the fitted line passes
+  // through the data and says nothing about anywhere else, and extrapolating it
+  // to zero load is how a 530 W standing draw with a slope of -0.96 gets
+  // reported as valid.
+  //
+  // Measured on this installation: a whole day of history spans 0.545 of its
+  // weighted mean; the median rolling hour spans 0.108.
+  if (mean_x <= 0.0)
+    return false;
+  return std::sqrt(var_x) / mean_x >= static_cast<double>(this->min_spread_);
 }
+
+void BaselineFit::set_min_spread(float fraction) { this->min_spread_ = fraction; }
 
 float BaselineFit::b() const {
   if (!this->valid())
