@@ -46,12 +46,19 @@ usable state simply declares no `switch:`.
 
 Every device: `id` (a graph name, not an ESPHome id) and `kind`
 (`grid` / `inverter` / `battery` / `bus` / `pv`), plus optionally `name`,
-`icon` (an MDI glyph present in the icon font), and `key` (shown in logs and
-on the detail screen).
+`icon` (see [Icons](#icons)), and `key` (shown in logs and on the detail
+screen).
 
-Detail-screen readings, on any device: `voltage`, `temperature`, `link`.
+Detail-screen readings, on any device: `voltage`, `current`, `temperature`,
+`link` — each optional, each drawing its tile only when declared.
 `control:` names a Home Assistant switch entity and puts a working toggle on
 the device's detail screen — see the permission note in the README.
+
+A device without telemetry of its own can borrow a neighbour's: a dumb
+UPS-style inverter has no sensors, but the metering breaker on its output
+does, so its card declares the breaker's voltage/current/temperature and the
+breaker's relay as `control:` — cutting the output is exactly what a smart
+inverter's own output switch would do.
 `on_click:` runs an automation when the device's box is tapped; the component
 knows nothing about LVGL pages, the YAML decides what a tap does.
 
@@ -85,7 +92,10 @@ knows nothing about LVGL pages, the YAML decides what a tap does.
 Consumers are terminals of the bus with a required `name`, a `side`
 (`left` / `right`, default `right`), and the same measurement keys as any
 terminal — including `power: auto` for the one unmetered remainder. Optional:
-`icon`, `key`, `voltage`, `temperature`, `link`, `control`.
+`icon`, `key`, `voltage`, `current`, `temperature`, `link`, `control`.
+Only `name` and a power source are required — every other key adds its own
+tile or row when declared and costs nothing when absent; the example's first
+consumer annotates each key.
 
 ## Battery `details:`
 
@@ -129,9 +139,22 @@ families, one rule: numerals monospaced, words proportional.
 | `s20` | Montserrat 700 | 20 | | `m28` | JetBrains Mono 700 | 28 |
 | `s22` | Montserrat 700 | 22 | | `m72` | JetBrains Mono 700 | 72 |
 
-plus `icon` — Material Design Icons at 26px, containing the glyphs your
-devices declare. The example carries the exact `font:` block, including the
-minimal glyph sets that keep twelve faces affordable in flash.
+plus `icon` — Material Design Icons at 26px; its glyph list is filled
+automatically (see [Icons](#icons)). The example carries the exact `font:`
+block, including the minimal glyph sets that keep twelve faces affordable in
+flash.
+
+## Icons
+
+`icon:` takes a Material Design Icons name — `icon: mdi:water-boiler` —
+resolved at validation against the release the example pins (v7.4.47); a raw
+glyph string is also accepted. A typo fails validation with a clear error,
+never a blank box on the wall.
+
+The icon font is declared with **no `glyphs:` at all**: the component collects
+every `icon:` in the config plus its own fixed markers (node fallbacks, the
+lost-contact ✕, the Back chevron, the state marker, check / alert) and injects
+them into that font — changing an icon never means editing the font.
 
 ## LVGL scaffolding
 

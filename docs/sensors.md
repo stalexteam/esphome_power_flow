@@ -44,10 +44,15 @@ component only sees entities.
 | Where | Hardware | Provides |
 |---|---|---|
 | inverter input | metering MCB (DIN breaker-meter) | power, energy, voltage, switch, temperature (if the meter has it) |
-| inverter output | metering RCBO | power, energy |
+| inverter output | metering RCBO | power, energy, voltage, current, temperature, relay |
 | battery | the BMS, exposed to HA over a BLE bridge | signed power, SOC, voltage, capacity, cells, temperatures |
 | consumers | smart plugs and metering relays | power, relay state |
 | everything else | — | one consumer declared `power: auto` |
+
+The output RCBO does double duty: besides metering the edge, its readings and
+its relay are declared on the inverter *device*, so the inverter's detail card
+gets voltage/current/temperature tiles and an on/off toggle — the readings a
+smart inverter would expose by itself.
 
 ![Typical sensor layout](img/wiring.svg)
 
@@ -56,6 +61,9 @@ component only sees entities.
 A hybrid inverter's Home Assistant integration already exposes nearly every
 reading the diagram needs: grid input, output, battery and PV power come
 built in, and the whole inverter node maps onto entities you already have —
-no DIN meters required. What remains is the consumer side: add a smart plug
+no DIN meters required. Several MPPT inputs (PV1, PV2, …) go onto one `pv`
+terminal as `sum: [sensor.pv1_power, sensor.pv2_power]` — added together;
+if the inverter instead reports one PV line under two names, `prefer:` takes
+the first valid reading rather than doubling it. What remains is the consumer side: add a smart plug
 or metering breaker for each load you want as its own card, and leave the
 rest to the one `power: auto` remainder.
