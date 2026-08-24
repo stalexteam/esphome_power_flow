@@ -12,7 +12,9 @@ component subscribes to them itself.
   that interrupts it.
 - **Battery node** — SOC (%), voltage (V), remaining capacity (Ah), and a
   signed power reading: **+ charging, − discharging**. Everything else on the
-  battery screen (cells, temperatures, cycles…) is optional.
+  battery screen (cells, temperatures, cycles…) is optional. For a JK BMS,
+  [syssi/esphome-jk-bms](https://github.com/syssi/esphome-jk-bms) exposes all
+  of it to Home Assistant.
 - Publish-on-change is fine. The component time-averages over a window, so
   meters that report every few seconds and meters that only report past a
   change threshold both work; a reading does not have to be periodic.
