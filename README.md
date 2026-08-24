@@ -27,7 +27,7 @@ against ESPHome 2026.8.
 
 ```yaml
 external_components:
-  - source: github://stalexteam/esphome_power_flow@v1.0.3
+  - source: github://stalexteam/esphome_power_flow@v1.0.4
     components: [power_flow]
 ```
 
