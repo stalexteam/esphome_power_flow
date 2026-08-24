@@ -36,13 +36,18 @@ component subscribes to them itself.
 A UPS-style inverter with no telemetry of its own, so every reading is
 external:
 
+Any Home Assistant–supported metering MCB / RCBO / relay / plug works; the
+component only sees entities.
+
 | Where | Hardware | Provides |
 |---|---|---|
-| inverter input | EARU Zigbee DIN breaker-meter | power, energy, voltage, temperature, switch |
-| inverter output | Tongou Zigbee RCBO with metering | power, energy |
-| battery | JK BMS over a BLE bridge ([syssi/esphome-jk-bms](https://github.com/syssi/esphome-jk-bms) on an ESP32-C3) | signed power, SOC, voltage, capacity, cells, temperatures |
-| consumers | Zigbee smart plugs and metering relays (Moes and similar) | power, relay state |
+| inverter input | metering MCB (DIN breaker-meter) | power, energy, voltage, temperature, switch |
+| inverter output | metering RCBO | power, energy |
+| battery | the BMS, exposed to HA over a BLE bridge | signed power, SOC, voltage, capacity, cells, temperatures |
+| consumers | smart plugs and metering relays | power, relay state |
 | everything else | — | one consumer declared `power: auto` |
+
+![Typical sensor layout](img/wiring.svg)
 
 ## Hybrid inverters — Deye and similar
 

@@ -1,0 +1,94 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="940" height="560" viewBox="0 0 940 560" font-family="ui-sans-serif, system-ui, 'Segoe UI', sans-serif">
+  <title>Typical sensor layout: grid → EARU meter → inverter → Tongou meter → bus → consumers; battery via BMS over BLE</title>
+  <rect width="940" height="560" rx="14" fill="#0E1720"/>
+
+  <!-- ================= wires ================= -->
+  <!-- grid -> inverter -->
+  <line x1="160" y1="170" x2="340" y2="170" stroke="#2E5B8F" stroke-width="2.5"/>
+  <polygon points="322,164 334,170 322,176" fill="#2E5B8F"/>
+  <!-- inverter -> bus -->
+  <line x1="520" y1="170" x2="680" y2="170" stroke="#3E7FA8" stroke-width="2.5"/>
+  <polygon points="662,164 674,170 662,176" fill="#3E7FA8"/>
+  <!-- inverter <-> battery -->
+  <line x1="430" y1="220" x2="430" y2="330" stroke="#2E6B47" stroke-width="2.5"/>
+  <polygon points="424,234 430,224 436,234" fill="#2E6B47"/>
+  <polygon points="424,316 430,326 436,316" fill="#2E6B47"/>
+  <!-- bus -> metered consumers -->
+  <line x1="760" y1="212" x2="760" y2="300" stroke="#3E7FA8" stroke-width="2.5"/>
+  <polygon points="754,290 760,299 766,290" fill="#3E7FA8"/>
+  <!-- bus -> unmetered remainder -->
+  <line x1="860" y1="212" x2="860" y2="440" stroke="#3E7FA8" stroke-width="2" stroke-dasharray="6 6" opacity="0.75"/>
+  <polygon points="854,430 860,439 866,430" fill="#3E7FA8" opacity="0.75"/>
+
+  <!-- ================= city grid ================= -->
+  <rect x="30" y="128" width="130" height="84" rx="14" fill="#16222E" stroke="#27394B" stroke-width="1.5"/>
+  <path d="M97 138 L85 160 L94 160 L88 178 L107 153 L97 153 L105 138 Z" fill="#5B9DFF"/>
+  <text x="95" y="198" fill="#E8F0F6" font-size="14" font-weight="600" text-anchor="middle">City grid</text>
+
+  <!-- ================= inverter ================= -->
+  <rect x="340" y="120" width="180" height="100" rx="14" fill="#16222E" stroke="#27394B" stroke-width="1.5"/>
+  <path d="M400 144 q15 -18 30 0 q15 18 30 0" fill="none" stroke="#E8F0F6" stroke-width="2.5" stroke-linecap="round"/>
+  <text x="430" y="178" fill="#E8F0F6" font-size="16" font-weight="600" text-anchor="middle">Inverter</text>
+  <text x="430" y="200" fill="#6F8699" font-size="11" text-anchor="middle">UPS-type — no telemetry of its own</text>
+  <text x="348" y="163" fill="#6F8699" font-size="10">input</text>
+  <text x="512" y="163" fill="#6F8699" font-size="10" text-anchor="end">output</text>
+
+  <!-- ================= apartment bus ================= -->
+  <rect x="680" y="128" width="200" height="84" rx="14" fill="#16222E" stroke="#27394B" stroke-width="1.5"/>
+  <text x="780" y="168" fill="#E8F0F6" font-size="15" font-weight="600" text-anchor="middle">Apartment bus</text>
+  <text x="780" y="190" fill="#6F8699" font-size="11" text-anchor="middle">source: inv.output</text>
+
+  <!-- ================= battery ================= -->
+  <rect x="340" y="330" width="180" height="96" rx="14" fill="#16222E" stroke="#2E6B47" stroke-width="1.5"/>
+  <rect x="408" y="344" width="36" height="16" rx="3" fill="none" stroke="#4FD98A" stroke-width="2"/>
+  <rect x="446" y="348" width="5" height="8" rx="1.5" fill="#4FD98A"/>
+  <text x="430" y="388" fill="#E8F0F6" font-size="15" font-weight="600" text-anchor="middle">Battery</text>
+  <text x="430" y="408" fill="#6F8699" font-size="10.5" text-anchor="middle">BMS · BLE bridge → HA</text>
+
+  <!-- ================= meters ================= -->
+  <!-- EARU on the grid line -->
+  <circle cx="250" cy="170" r="14" fill="#16222E" stroke="#8FC0FF" stroke-width="1.8"/>
+  <text x="250" y="174.5" fill="#8FC0FF" font-size="11" font-weight="700" text-anchor="middle">W</text>
+  <text x="250" y="212" fill="#A8C0D2" font-size="12" font-weight="600" text-anchor="middle">metering MCB</text>
+  <text x="250" y="228" fill="#6F8699" font-size="11" text-anchor="middle">power · energy · voltage</text>
+  <text x="250" y="243" fill="#6F8699" font-size="11" text-anchor="middle">temperature · switch</text>
+
+  <!-- Tongou on the output line -->
+  <circle cx="600" cy="170" r="14" fill="#16222E" stroke="#7ED4F0" stroke-width="1.8"/>
+  <text x="600" y="174.5" fill="#7ED4F0" font-size="11" font-weight="700" text-anchor="middle">W</text>
+  <text x="600" y="212" fill="#A8C0D2" font-size="12" font-weight="600" text-anchor="middle">metering RCBO</text>
+  <text x="600" y="228" fill="#6F8699" font-size="11" text-anchor="middle">power · energy</text>
+
+  <!-- BMS on the battery line -->
+  <circle cx="430" cy="275" r="14" fill="#16222E" stroke="#4FD98A" stroke-width="1.8"/>
+  <text x="430" y="279.5" fill="#4FD98A" font-size="11" font-weight="700" text-anchor="middle">W</text>
+  <text x="452" y="264" fill="#A8C0D2" font-size="11" font-weight="600">BMS over BLE:</text>
+  <text x="452" y="280" fill="#6F8699" font-size="11">signed power · SOC · voltage</text>
+  <text x="452" y="295" fill="#6F8699" font-size="11">capacity · cells · temperatures</text>
+  <text x="452" y="311" fill="#F5C452" font-size="10.5">unavailable: no_data</text>
+
+  <!-- plug meter on the consumers line -->
+  <circle cx="760" cy="252" r="13" fill="#16222E" stroke="#7ED4F0" stroke-width="1.8"/>
+  <text x="760" y="256.5" fill="#7ED4F0" font-size="10.5" font-weight="700" text-anchor="middle">W</text>
+
+  <!-- ================= consumers ================= -->
+  <rect x="660" y="300" width="200" height="96" rx="14" fill="#16222E" stroke="#27394B" stroke-width="1.5"/>
+  <text x="760" y="328" fill="#E8F0F6" font-size="14" font-weight="600" text-anchor="middle">Consumers</text>
+  <text x="760" y="350" fill="#7ED4F0" font-size="12" text-anchor="middle">PC · Desk · Boiler · EV …</text>
+  <text x="760" y="371" fill="#6F8699" font-size="10.5" text-anchor="middle">a smart plug or metering relay each:</text>
+  <text x="760" y="386" fill="#6F8699" font-size="10.5" text-anchor="middle">power · relay state</text>
+
+  <!-- unmetered remainder -->
+  <rect x="680" y="440" width="200" height="70" rx="14" fill="#131C25" stroke="#23303C" stroke-width="1.5" stroke-dasharray="6 5"/>
+  <text x="780" y="468" fill="#E8F0F6" font-size="13" font-weight="600" text-anchor="middle">Everything else</text>
+  <text x="780" y="488" fill="#6F8699" font-size="10.5" text-anchor="middle">no meter — one consumer declared</text>
+  <text x="780" y="502" fill="#A8C0D2" font-size="10.5" font-weight="600" text-anchor="middle">power: auto</text>
+
+  <!-- ================= legend ================= -->
+  <circle cx="42" cy="472" r="10" fill="#16222E" stroke="#7ED4F0" stroke-width="1.6"/>
+  <text x="42" y="475.5" fill="#7ED4F0" font-size="8.5" font-weight="700" text-anchor="middle">W</text>
+  <text x="60" y="476" fill="#6F8699" font-size="11.5">a meter — the Home Assistant entity the edge declares</text>
+  <line x1="32" y1="500" x2="52" y2="500" stroke="#3E7FA8" stroke-width="2" stroke-dasharray="6 6" opacity="0.75"/>
+  <text x="60" y="504" fill="#6F8699" font-size="11.5">no meter — solved from the node balance (power: auto)</text>
+  <text x="30" y="534" fill="#6F8699" font-size="11.5">Every reading reaches the panel through Home Assistant: Zigbee / BLE → HA → panel.</text>
+</svg>
