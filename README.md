@@ -7,8 +7,9 @@ screen, and a detail screen for whichever node was tapped. Everything is read
 from Home Assistant; the panel measures nothing itself.
 
 <p>
-  <img src="docs/img/01-grid-ongrid-pv.png" width="30%" alt="Power flow screen"/>
-  <img src="docs/img/05-load-active.png" width="30%" alt="Node detail screen"/>
+  <img src="docs/img/01-overview.png" width="30%" alt="Power flow screen"/>
+  <img src="docs/img/02-battery.png" width="30%" alt="Battery screen"/>
+  <img src="docs/img/03-load-switch.png" width="30%" alt="Node detail screen"/>
 </p>
 
 - The YAML stays declarative — entities, names, icons, fonts. Geometry,
