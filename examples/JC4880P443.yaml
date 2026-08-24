@@ -45,7 +45,7 @@ power_flow:
   devices:
     - id: grid
       kind: grid
-      icon: "󰉁"        # flash
+      icon: mdi:transmission-tower-export
       name: "City grid"
       key: grid
       voltage: sensor.acin_voltage      # diagnostic only on the diagram;
@@ -63,8 +63,17 @@ power_flow:
 
     - id: inv
       kind: inverter
-      icon: "󰥛"        # sine-wave
+      icon: mdi:home-battery
       name: "Inverter"
+      # The dumb inverter has no telemetry, so the detail card borrows the
+      # output breaker's: its readings, and its relay as the toggle (which
+      # cuts the load after the inverter — same act a smart inverter's output
+      # control performs).
+      voltage: sensor.rcbo_invertor_output_voltage
+      current: sensor.rcbo_invertor_output_current
+      temperature: sensor.rcbo_invertor_output_temperature
+      link: sensor.rcbo_invertor_output_linkquality
+      control: switch.rcbo_invertor_output
       terminals:
         input:
           meter: sensor.acin_power
@@ -78,9 +87,9 @@ power_flow:
         output:
           meter: sensor.rcbo_invertor_output_power
           energy: sensor.rcbo_invertor_output_energy
-          # switch: switch.rcbo_invertor_output
-          #   ^ disabled in Home Assistant. Enabling it turns "the whole bottom
-          #     half went dark" into "the output breaker is open".
+          # Turns "the whole bottom half went dark" into "the output breaker
+          # is open". The same entity doubles as the device's `control:`.
+          switch: switch.rcbo_invertor_output
         battery:
           power: sensor.bms24v_power    # signed: + charge, − discharge
           unavailable: no_data          # BLE bridge, not a line-powered meter
@@ -90,11 +99,17 @@ power_flow:
           baseline: learn
         pv:
           enabled: false                # no panels yet; the node is not drawn
+          # icon: mdi:solar-power-variant-outline
           # power: auto                 ← if they arrive without a meter
           # meter: sensor.pv_power      ← if they arrive with one (preferred)
+          # sum: [sensor.pv1_power, sensor.pv2_power]
+          #                             ← several MPPT strings, added together;
+          #                               `prefer:` instead = one line reported
+          #                               twice, first valid reading wins
 
     - id: bat
       kind: battery
+      icon: mdi:battery
       name: "Battery"
       soc: sensor.bms24v_state_of_charge
       voltage: sensor.bms24v_voltage
@@ -132,23 +147,34 @@ power_flow:
       source: inv.output                # device-qualified terminal reference
 
   consumers:
-    # `key` is what appears in logs and on the detail screen under the name;
-    # `control` is a second subscription to the same switch entity, because
-    # reading needs three states and writing needs a Switch.
-    - { name: PC, icon: "󰍹", key: pc, side: right,
-        power: sensor.wallsocket_pc_power,
-        control: switch.wallsocket_pc }
-    - { name: Desk, icon: "󰥟",       side: right, power: sensor.wallsocket_desk_power,
-                                       switch: switch.wallsocket_desk,
-                                       control: switch.wallsocket_desk, key: desk }
-    - { name: Automation, icon: "󰘚", side: left,  power: sensor.wallsocket_automation_power }
-    - { name: BOLIVAR, icon: "󰭬",    side: left,  power: sensor.bolivar_charge_power,
-                                       switch: switch.bolivar_charge,
-                                       control: switch.bolivar_charge, key: bolivar }
-    - { name: Boiler, icon: "󰾒",     side: left,  power: sensor.relay_boiler_power,
-                                       switch: switch.relay_boiler,
-                                       control: switch.relay_boiler, key: boiler }
-    - { name: Other,      side: left,  power: auto, icon: "󰇘" }
+    # The first entry annotates every key; the rest follow the same shape.
+    # `switch:` and `control:` are two subscriptions to the same entity on
+    # purpose — reading needs three states, writing needs a Switch.
+    - { name: PC,                                # required · display name
+        power: sensor.wallsocket_pc_power,       # required · consumption (or `auto` — once per node)
+        key: pc,                                 # optional · log & detail-screen key
+        icon: mdi:desktop-tower-monitor,         # optional · added to the icon font automatically
+        side: right,                             # optional · left|right column (default right)
+        link: sensor.wallsocket_pc_linkquality,  # optional · radio link quality
+        control: switch.wallsocket_pc }          # optional · writable switch — the card's toggle
+    - { name: Desk, key: desk, icon: mdi:desk, side: right,
+        power: sensor.wallsocket_desk_power,
+        switch: switch.wallsocket_desk,          # optional · switch state — explicit `off` opens the edge
+        link: sensor.wallsocket_desk_linkquality,
+        control: switch.wallsocket_desk }
+    - { name: Automation, icon: mdi:home-assistant, side: left,
+        power: sensor.wallsocket_automation_power }  # this plug reports `state: null` — no switch to read
+    - { name: BOLIVAR, key: bolivar, icon: mdi:motorbike-electric, side: left,
+        power: sensor.bolivar_charge_power,
+        switch: switch.bolivar_charge,
+        link: sensor.bolivar_charge_linkquality,
+        control: switch.bolivar_charge }
+    - { name: Boiler, key: boiler, icon: mdi:water-boiler, side: left,
+        power: sensor.relay_boiler_power,
+        switch: switch.relay_boiler,
+        control: switch.relay_boiler }
+    - { name: Other, icon: mdi:dots-horizontal, side: left,
+        power: auto }                            # the unmetered remainder
 
   # ------------------------------------------------------------------- tuning
   average_window: 60s          # what differences are computed over
@@ -389,32 +415,15 @@ font:
   - { file: "gfonts://JetBrains+Mono@700", id: f_m28, size: 28, bpp: 4, glyphs: *mono_glyphs }
   - { file: "gfonts://JetBrains+Mono@700", id: f_m72, size: 72, bpp: 4, glyphs: "0123456789" }
 
-  # Material Design Icons, pinned so the codepoints below stay valid
+  # Material Design Icons, pinned so the `mdi:` names in section 1 stay valid.
+  # No `glyphs:` on purpose: the component collects every `icon:` from its
+  # config plus its own markers and injects them into this font at validation.
   - file:
       type: web
       url: "https://github.com/Templarian/MaterialDesign-Webfont/raw/v7.4.47/fonts/materialdesignicons-webfont.ttf"
     id: f_icons
     size: 26
     bpp: 4
-    glyphs: [
-      # power_flow diagram. Codepoints read out of the webfont repo's
-      # scss/_variables.scss at the tag above, not from memory.
-      "󰉁",   # flash                  city grid
-      "󰥛",   # sine-wave              inverter
-      "󰖨",   # white-balance-sunny    PV
-      "󱐥",   # power-plug-outline     on-grid load
-      "󰇘",   # dots-horizontal        the unmetered remainder
-      "󰍹",   # monitor                PC
-      "󰥟",   # desk-lamp              Desk
-      "󰘚",   # chip                   Automation
-      "󰭬",   # car-electric           BOLIVAR
-      "󰾒",   # water-boiler           Boiler
-      "󱎘",   # close-thick            the lost-contact marker
-      "󰅁",   # chevron-left           the battery screen's Back
-      "󰄬",   # check                  no errors
-      "󰀪",   # alert-outline          errors present
-      "󰧞",   # circle-medium          the state marker
-    ]
 
 # =============================================================================
 #  LVGL — three pages, each one empty full-screen `obj`. The power_flow
