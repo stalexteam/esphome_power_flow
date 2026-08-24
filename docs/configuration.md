@@ -5,7 +5,8 @@ colours and arithmetic live in the component. The governing rule: **a value
 whose validity condition is unmet shows a dash, never an estimate.**
 
 For a complete working config see
-[`examples/JC4880P443.yaml`](../examples/JC4880P443.yaml).
+[`examples/JC4880P443.yaml`](../examples/JC4880P443.yaml); for what the
+meters must provide and where they sit, see [sensors.md](sensors.md).
 
 ## The model
 

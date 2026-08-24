@@ -50,6 +50,7 @@ logs an error, and the relay does not move. Everything else works without it.
 
 | | |
 |---|---|
+| [Sensor requirements](docs/sensors.md) | what the meters must provide, how they sit, a typical set |
 | [Configuration reference](docs/configuration.md) | every option: devices, terminals, consumers, tuning, inference, fonts |
 | [Example config](examples/JC4880P443.yaml) | a full panel, sectioned by how often each part changes |
 | [License](LICENSE) | GPL-3.0 |
