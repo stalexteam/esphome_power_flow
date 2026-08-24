@@ -26,6 +26,8 @@
 #include "esphome/components/sensor/sensor.h"
 #include "esphome/components/text_sensor/text_sensor.h"
 #include "esphome/components/binary_sensor/binary_sensor.h"
+#include "esphome/components/switch/switch.h"
+#include "esphome/components/time/real_time_clock.h"
 
 #ifdef USE_LVGL
 #include "esphome/components/lvgl/lvgl_esphome.h"
@@ -42,6 +44,7 @@ namespace power_flow {
 
 class FlowRenderer;
 class BatteryScreen;
+class LoadScreen;
 
 static const uint8_t INVALID_INDEX = 0xFF;
 
@@ -110,8 +113,40 @@ struct PowerFlowStyle {
 // One measured (or solved) terminal. This is both the runtime state and what
 // the renderer reads; there is no second copy of it.
 // ---------------------------------------------------------------------------
+/// What the detail screen needs beyond the diagram (DEV/UI/LOAD_UI_SPEC.md).
+///
+/// It hangs off either a consumer terminal or a device, because the screen is
+/// about a *card* on the diagram and a card is one or the other. For the grid
+/// the two are split on purpose: its state and its power come from the
+/// inverter's input terminal — that is the edge the card sits on — while its
+/// voltage, temperature and link belong to the breaker itself.
+/// Every field is optional; a load that reports none of it still gets a screen,
+/// with the blocks it cannot fill simply absent (§2).
+struct NodeDetails {
+  sensor::Sensor *voltage{nullptr};
+  sensor::Sensor *temperature{nullptr};
+  sensor::Sensor *link{nullptr};
+  /// A second subscription to the switch entity, and deliberately so: the state
+  /// comes from a text sensor because only that can tell `off` from `unknown`
+  /// (decision log #6), while writing needs a Switch. They do different jobs on
+  /// the same entity.
+  switch_::Switch *control{nullptr};
+
+  /// The entity ids, for §4's reason line and §8's list. Pointers to the same
+  /// string literals codegen already emits for the subscriptions, so the text
+  /// costs nothing twice — the linker merges identical literals.
+  const char *power_id{nullptr};
+  const char *switch_id{nullptr};
+  const char *voltage_id{nullptr};
+  const char *temperature_id{nullptr};
+  const char *link_id{nullptr};
+};
+
 struct Terminal {
   std::string name;
+  /// The key from the config (`pc`, `boiler`), shown under the display name and
+  /// used in logs — the thing to grep for when something is wrong (§3).
+  std::string id;
   std::string icon;  ///< UTF-8 MDI glyph; empty falls back to the role's
   uint8_t device{INVALID_INDEX};
   TerminalRole role{TerminalRole::GENERIC};
@@ -155,6 +190,9 @@ struct Terminal {
   float display{NAN};
   bool stale{false};
   EdgeState state{EdgeState::NO_DATA};
+
+  /// Present only where the owner configured a detail screen for this load.
+  std::unique_ptr<NodeDetails> extra;
 };
 
 /// Everything the battery screen reads (DEV/UI/BATTERY_UI_SPEC.md). Kept apart
@@ -217,6 +255,10 @@ struct Device {
 
   /// Present only on the battery, and only when the owner configured it.
   std::unique_ptr<BatteryDetails> details;
+  /// Present when this device's card has a detail screen.
+  std::unique_ptr<NodeDetails> extra;
+  /// The key used in logs and shown under the display name (§3).
+  std::string key;
 };
 
 // ---------------------------------------------------------------------------
@@ -256,10 +298,33 @@ class PowerFlow : public Component {
   /// without it the battery screen is simply not built.
   void set_battery_parent(lv_obj_t *parent) { this->battery_parent_ = parent; }
   lv_obj_t *battery_parent() const { return this->battery_parent_; }
+  void set_load_parent(lv_obj_t *parent) { this->load_parent_ = parent; }
+  lv_obj_t *load_parent() const { return this->load_parent_; }
+
+  /// Wall-clock, for "off since 09:12". Durations come from millis(); the hour
+  /// does not, and a reason that says how long ago without saying when is half
+  /// a reason — the time is what lets you match it against everything else that
+  /// happened (DEV/UI/LOAD_UI_SPEC.md §4).
+  void set_time(time::RealTimeClock *t) { this->time_ = t; }
+  time::RealTimeClock *rtc() const { return this->time_; }
+
+  /// Which card the detail screen is showing. Set by the tap, read by the
+  /// screen; INVALID_INDEX means nothing is selected yet.
+  void select_node(uint8_t device, uint8_t terminal) {
+    this->sel_device_ = device;
+    this->sel_terminal_ = terminal;
+  }
+  uint8_t selected_device() const { return this->sel_device_; }
+  uint8_t selected_terminal() const { return this->sel_terminal_; }
   /// Fired by the battery screen's `Back` button. The component does not know
   /// what a page is; the YAML binds the action.
   void set_on_back(Trigger<> *t) { this->on_back_ = t; }
   Trigger<> *on_back() const { return this->on_back_; }
+  /// Fired by a tap on any node that does not bind its own action. The battery
+  /// binds one because it opens a different screen; everything else shares the
+  /// detail screen, so one trigger serves them all.
+  void set_on_node_click(Trigger<> *t) { this->on_node_click_ = t; }
+  Trigger<> *on_node_click() const { return this->on_node_click_; }
 #endif
   void set_average_window(uint32_t window_ms) { this->average_window_ = window_ms; }
   /// Span used for the numbers on screen. Shorter than the averaging window on
@@ -308,6 +373,12 @@ class PowerFlow : public Component {
   void set_terminal_baseline_learn(uint8_t terminal, bool learn);
   void set_terminal_sign(uint8_t terminal, int8_t sign);
   void set_terminal_icon(uint8_t terminal, const std::string &icon);
+  void set_terminal_id(uint8_t terminal, const std::string &id);
+  void set_device_key(uint8_t device, const std::string &key);
+
+  // --- the load screen's data (DEV/UI/LOAD_UI_SPEC.md)
+  NodeDetails &extra(uint8_t terminal);
+  NodeDetails &device_extra(uint8_t device);
   void set_device_icon(uint8_t device, const std::string &icon);
 
   // --- device-level entities
@@ -332,6 +403,10 @@ class PowerFlow : public Component {
   const std::vector<Device> &devices() const { return this->devices_; }
   const std::vector<Terminal> &terminals() const { return this->terminals_; }
   const Diagnostics &diagnostics() const { return this->diag_; }
+  float idle_below() const { return this->idle_below_; }
+  uint32_t display_window() const { return this->display_window_; }
+  /// When this terminal's newest sample arrived, in millis(). 0 if never.
+  uint32_t last_update(const Terminal &t) const;
   const PowerFlowStyle &style() const { return this->style_; }
   uint8_t find_device(const std::string &id) const;
 #ifdef USE_LVGL
@@ -364,12 +439,18 @@ class PowerFlow : public Component {
   /// and on any build without LVGL.
   std::unique_ptr<FlowRenderer> renderer_;
   std::unique_ptr<BatteryScreen> battery_;
+  std::unique_ptr<LoadScreen> load_;
 
   binary_sensor::BinarySensor *status_{nullptr};
 #ifdef USE_LVGL
   lv_obj_t *parent_{nullptr};
   lv_obj_t *battery_parent_{nullptr};
+  lv_obj_t *load_parent_{nullptr};
+  time::RealTimeClock *time_{nullptr};
+  uint8_t sel_device_{INVALID_INDEX};
+  uint8_t sel_terminal_{INVALID_INDEX};
   Trigger<> *on_back_{nullptr};
+  Trigger<> *on_node_click_{nullptr};
 #endif
   uint32_t average_window_{60000};
   uint32_t display_window_{10000};

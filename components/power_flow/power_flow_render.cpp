@@ -1801,21 +1801,23 @@ void FlowRenderer::on_node_clicked_(uint8_t node) {
   const Node &n = this->nodes_[node];
   const Terminal *t = this->term_(n.terminal);
 
-  uint8_t di = n.device;
-  if (di == INVALID_INDEX && t != nullptr)
-    di = t->device;
-  const Device *d = this->dev_(di);
-  if (d == nullptr) {
-    ESP_LOGD(TAG, "tap on node %d (%s): no device behind it", (int) n.slot,
-             t != nullptr ? t->name.c_str() : "-");
+  // Tell the detail screen which card this is *before* anything navigates. A
+  // consumer has no device of its own, and that absence is the discriminator:
+  // the screen reads the pair and decides which of the two carries the name.
+  this->pf_->select_node(n.device, n.terminal);
+
+  // A device may bind its own action — the battery does, because it opens a
+  // different screen. Everything else falls through to the shared one.
+  const Device *d = this->dev_(n.device);
+  Trigger<> *trig = d != nullptr && d->on_click != nullptr ? d->on_click : this->pf_->on_node_click();
+  if (trig == nullptr) {
+    ESP_LOGD(TAG, "tap on %s: nothing bound", t != nullptr ? t->name.c_str() : "?");
     return;
   }
-  if (d->on_click == nullptr) {
-    ESP_LOGD(TAG, "tap on %s: no on_click bound", d->id.c_str());
-    return;
-  }
-  ESP_LOGI(TAG, "tap on %s — firing on_click", d->id.c_str());
-  d->on_click->trigger();
+  ESP_LOGI(TAG, "tap on %s (device %u, terminal %u)",
+           t != nullptr ? t->name.c_str() : (d != nullptr ? d->name.c_str() : "?"),
+           (unsigned) n.device, (unsigned) n.terminal);
+  trig->trigger();
 }
 
 }  // namespace power_flow

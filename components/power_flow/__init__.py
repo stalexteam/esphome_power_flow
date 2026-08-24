@@ -30,12 +30,14 @@ import re
 
 from esphome import automation
 import esphome.codegen as cg
-from esphome.components import binary_sensor, font, sensor, text_sensor
+from esphome.components import binary_sensor, font, sensor, switch, text_sensor, time as time_
 from esphome.components.homeassistant import (
     HOME_ASSISTANT_IMPORT_SCHEMA,
+    HOME_ASSISTANT_IMPORT_CONTROL_SCHEMA,
     setup_home_assistant_entity,
 )
 from esphome.components.homeassistant.sensor import HomeassistantSensor
+from esphome.components.homeassistant.switch import HomeassistantSwitch
 from esphome.components.homeassistant.text_sensor import HomeassistantTextSensor
 from esphome.components.lvgl.defines import add_lv_use
 from esphome.components.lvgl.types import lv_obj_t
@@ -147,8 +149,16 @@ CONF_COUNT = "count"
 CONF_LABEL = "label"
 CONF_HIGHLIGHT_ABOVE = "highlight_above"
 CONF_SENSOR = "sensor"
+CONF_TEMPERATURE = "temperature"
+CONF_VOLTAGE_S = "voltage"
+CONF_LINK = "link"
+CONF_CONTROL = "control"
+CONF_ID_KEY = "key"
 CONF_BATTERY_PARENT_ID = "battery_parent_id"
 CONF_ON_BACK = "on_back"
+CONF_ON_NODE_CLICK = "on_node_click"
+CONF_LOAD_PARENT_ID = "load_parent_id"
+CONF_TIME_ID = "time_id"
 CONF_SUM = "sum"
 CONF_SWITCH = "switch"
 CONF_TERMINALS = "terminals"
@@ -243,6 +253,12 @@ _HA_TEXT_SENSOR_SCHEMA = text_sensor.text_sensor_schema(HomeassistantTextSensor)
     HOME_ASSISTANT_IMPORT_SCHEMA
 )
 
+# Writing needs a Switch; reading needs three states and so needs a text sensor.
+# Both point at the same entity and neither can do the other's job.
+_HA_SWITCH_SCHEMA = switch.switch_schema(HomeassistantSwitch).extend(
+    HOME_ASSISTANT_IMPORT_CONTROL_SCHEMA
+)
+
 
 _ha_entity_counter = itertools.count(1)
 
@@ -268,6 +284,10 @@ def _ha_entity(schema, value):
 def _ha_sensor(value):
     """`sensor.acin_power` -> a complete homeassistant sensor config."""
     return _ha_entity(_HA_SENSOR_SCHEMA, value)
+
+
+def _ha_switch(value):
+    return _ha_entity(_HA_SWITCH_SCHEMA, value)
 
 
 def _ha_text_sensor(value):
@@ -350,6 +370,14 @@ CONSUMER_SCHEMA = cv.All(
         {
             **_TERMINAL_KEYS,
             cv.Required(CONF_NAME): cv.string,
+            # The key used in logs and shown under the name on the detail screen (§3).
+            cv.Optional(CONF_ID_KEY): cv.string_strict,
+            # Whatever else this load happens to report (§7). Absent means no card.
+            cv.Optional(CONF_VOLTAGE_S): _ha_sensor,
+            cv.Optional(CONF_TEMPERATURE): _ha_sensor,
+            cv.Optional(CONF_LINK): _ha_sensor,
+            # Reading the switch needs three states, writing needs a Switch (§5).
+            cv.Optional(CONF_CONTROL): _ha_switch,
             cv.Optional(CONF_ICON): cv.string,
             cv.Optional(CONF_SIDE, default="right"): cv.enum(SIDES, lower=True),
         }
@@ -438,6 +466,13 @@ DEVICE_SCHEMA = cv.Schema(
         cv.Optional(CONF_SOC): _ha_sensor,
         cv.Optional(CONF_CAPACITY): _ha_sensor,
         cv.Optional(CONF_DETAILS): DETAILS_SCHEMA,
+        # The detail screen (DEV/UI/LOAD_UI_SPEC.md) is about a *card*, and a
+        # card is either a consumer or a device. `voltage:` above doubles as the
+        # first of its extra readings.
+        cv.Optional(CONF_ID_KEY): cv.string_strict,
+        cv.Optional(CONF_TEMPERATURE): _ha_sensor,
+        cv.Optional(CONF_LINK): _ha_sensor,
+        cv.Optional(CONF_CONTROL): _ha_switch,
         cv.Optional(CONF_SOURCE): _terminal_ref,
         # Sugar for a plain device meter: it becomes a GENERIC terminal. Needed
         # when a `tap:` hangs off the node (§5).
@@ -622,7 +657,12 @@ CONFIG_SCHEMA = cv.All(
             # The battery screen's root, on its own page. Optional: a panel that
             # does not want a second screen simply omits it.
             cv.Optional(CONF_BATTERY_PARENT_ID): cv.use_id(lv_obj_t),
+            cv.Optional(CONF_LOAD_PARENT_ID): cv.use_id(lv_obj_t),
+            cv.Optional(CONF_TIME_ID): cv.use_id(time_.RealTimeClock),
             cv.Optional(CONF_ON_BACK): automation.validate_automation(
+                {cv.GenerateID(CONF_TRIGGER_ID): cv.declare_id(DeviceClickTrigger)}
+            ),
+            cv.Optional(CONF_ON_NODE_CLICK): automation.validate_automation(
                 {cv.GenerateID(CONF_TRIGGER_ID): cv.declare_id(DeviceClickTrigger)}
             ),
             cv.Optional(
@@ -705,6 +745,52 @@ async def _details_to_code(var, index, det):
             f"{det[CONF_HIGHLIGHT_ABOVE]:.1f}f;"
         )
     )
+
+
+async def _new_ha_switch(conf):
+    var = await switch.new_switch(conf)
+    await cg.register_component(var, conf)
+    setup_home_assistant_entity(var, conf)
+    return var
+
+
+async def _extra_to_code(var, index, conf, device=False):
+    """The load detail screen's entities (DEV/UI/LOAD_UI_SPEC.md §5, §7, §8).
+
+    The entity ids are handed over as string literals as well as as objects. The
+    text is already in the firmware — the subscription cannot be made without it
+    — and identical literals are merged by the linker, so what this adds is a
+    pointer, not a copy of the string.
+    """
+
+    accessor = "device_extra" if device else "extra"
+
+    def field(name, value):
+        cg.add(cg.RawStatement(f"{var}->{accessor}({index}).{name} = {value};"))
+
+    def ident(name, entity_conf):
+        if entity_conf is not None:
+            field(name, cg.safe_exp(entity_conf[CONF_ENTITY_ID]))
+
+    keys = ((CONF_TEMPERATURE, "temperature"), (CONF_LINK, "link"))
+    if not device:  # a device's voltage is already wired for the flow card
+        keys = ((CONF_VOLTAGE_S, "voltage"),) + keys
+    for key, name in keys:
+        if (c := conf.get(key)) is not None:
+            field(name, await _new_ha_sensor(c))
+            ident(f"{name}_id", c)
+    if (c := conf.get(CONF_CONTROL)) is not None:
+        # Normally emitted by the switch platform's own to_code, which never
+        # runs here because the platform is not in the config — we build the
+        # entity programmatically. Without it the platform's C++ compiles
+        # against an api:: type that was compiled out.
+        cg.add_define("USE_API_HOMEASSISTANT_SERVICES")
+        field("control", await _new_ha_switch(c))
+    if device:
+        ident("voltage_id", conf.get(CONF_VOLTAGE))
+    else:
+        ident("power_id", conf.get(CONF_POWER) if isinstance(conf.get(CONF_POWER), dict) else None)
+    ident("switch_id", conf.get(CONF_SWITCH))
 
 
 async def _new_ha_sensor(conf):
@@ -807,8 +893,13 @@ def _ensure_ha_platform_sources():
     keeps a config that declares no homeassistant entities of its own from
     failing to link. A no-op when the user already has such a block.
     """
-    for domain in ("sensor", "text_sensor"):
+    for domain in ("sensor", "text_sensor", "switch"):
         entries = CORE.config.get(domain)
+        if entries is None:
+            # A config that declares no `switch:` at all has no list to append
+            # to, and without one the platform's C++ is never copied. Creating
+            # the key is the same trick one level down.
+            entries = CORE.config[domain] = []
         if not isinstance(entries, list):
             continue
         if any(
@@ -827,9 +918,17 @@ async def to_code(config):
     cg.add(var.set_parent(parent))
     if (bp := config.get(CONF_BATTERY_PARENT_ID)) is not None:
         cg.add(var.set_battery_parent(await cg.get_variable(bp)))
+        if (lp := config.get(CONF_LOAD_PARENT_ID)) is not None:
+            cg.add(var.set_load_parent(await cg.get_variable(lp)))
+        if (t := config.get(CONF_TIME_ID)) is not None:
+            cg.add(var.set_time(await cg.get_variable(t)))
     for conf in config.get(CONF_ON_BACK, []):
         trigger = cg.new_Pvariable(conf[CONF_TRIGGER_ID])
         cg.add(var.set_on_back(trigger))
+        await automation.build_automation(trigger, [], conf)
+    for conf in config.get(CONF_ON_NODE_CLICK, []):
+        trigger = cg.new_Pvariable(conf[CONF_TRIGGER_ID])
+        cg.add(var.set_on_node_click(trigger))
         await automation.build_automation(trigger, [], conf)
     cg.add(var.set_average_window(config[CONF_AVERAGE_WINDOW]))
     cg.add(var.set_display_window(config[CONF_DISPLAY_WINDOW]))
@@ -876,6 +975,8 @@ async def to_code(config):
         cg.add(var.add_device(device[CONF_KIND], did, device.get(CONF_NAME, did)))
         if CONF_ICON in device:
             cg.add(var.set_device_icon(index, device[CONF_ICON]))
+        cg.add(var.set_device_key(index, device.get(CONF_ID_KEY, did)))
+        await _extra_to_code(var, index, device, device=True)
 
         if (sw := device.get(CONF_SWITCH)) is not None:
             cg.add(var.set_device_switch(index, await _new_ha_text_sensor(sw)))
@@ -924,6 +1025,8 @@ async def to_code(config):
         cg.add(var.add_consumer(consumer[CONF_NAME], consumer[CONF_SIDE]))
         if CONF_ICON in consumer:
             cg.add(var.set_terminal_icon(index, consumer[CONF_ICON]))
+        cg.add(var.set_terminal_id(index, consumer.get(CONF_ID_KEY, consumer[CONF_NAME])))
         await _attach_terminal(var, index, consumer, None)
+        await _extra_to_code(var, index, consumer)
 
     _ensure_ha_platform_sources()

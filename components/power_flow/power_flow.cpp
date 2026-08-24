@@ -1,6 +1,7 @@
 #include "power_flow.h"
 #include "power_flow_render.h"
 #include "battery_render.h"
+#include "load_render.h"
 
 #include "esphome/core/log.h"
 #include "esphome/core/hal.h"
@@ -66,7 +67,7 @@ uint8_t PowerFlow::add_terminal(uint8_t device, TerminalRole role, const std::st
   t.name = name.empty() ? role_name(role) : name;
   t.sign = default_sign(role);
   t.bidirectional = role == TerminalRole::BATTERY;
-  this->terminals_.push_back(t);
+  this->terminals_.push_back(std::move(t));
   uint8_t idx = static_cast<uint8_t>(this->terminals_.size() - 1);
   if (device < this->devices_.size())
     this->devices_[device].terminals.push_back(idx);
@@ -80,7 +81,7 @@ uint8_t PowerFlow::add_consumer(const std::string &name, Side side) {
   t.role = TerminalRole::GENERIC;
   t.device = INVALID_INDEX;  // a consumer hangs off the bus, not off a device
   t.sign = -1;               // always out of the bus
-  this->terminals_.push_back(t);
+  this->terminals_.push_back(std::move(t));
   return static_cast<uint8_t>(this->terminals_.size() - 1);
 }
 
@@ -114,6 +115,22 @@ void PowerFlow::set_terminal_enabled(uint8_t t, bool e) { this->terminals_[t].en
 void PowerFlow::set_terminal_baseline_learn(uint8_t t, bool l) { this->terminals_[t].learn_baseline = l; }
 void PowerFlow::set_terminal_sign(uint8_t t, int8_t s) { this->terminals_[t].sign = s; }
 void PowerFlow::set_terminal_icon(uint8_t t, const std::string &i) { this->terminals_[t].icon = i; }
+void PowerFlow::set_terminal_id(uint8_t t, const std::string &i) { this->terminals_[t].id = i; }
+void PowerFlow::set_device_key(uint8_t d, const std::string &k) { this->devices_[d].key = k; }
+
+NodeDetails &PowerFlow::device_extra(uint8_t d) {
+  Device &dev = this->devices_[d];
+  if (dev.extra == nullptr)
+    dev.extra = make_unique<NodeDetails>();
+  return *dev.extra;
+}
+
+NodeDetails &PowerFlow::extra(uint8_t t) {
+  Terminal &term = this->terminals_[t];
+  if (term.extra == nullptr)
+    term.extra = make_unique<NodeDetails>();
+  return *term.extra;
+}
 void PowerFlow::set_device_icon(uint8_t d, const std::string &i) { this->devices_[d].icon = i; }
 
 void PowerFlow::set_device_switch(uint8_t d, text_sensor::TextSensor *s) { this->devices_[d].switch_source = s; }
@@ -143,6 +160,16 @@ void PowerFlow::configure_inference(bool enabled, InferenceMode mode, float min_
   this->inference_.set_min_discharge(min_discharge);
   this->inference_.set_hold(hold_ms);
   this->inference_.set_require_stale_grid(require_stale_grid);
+}
+
+uint32_t PowerFlow::last_update(const Terminal &t) const {
+  uint32_t newest = 0;
+  for (const TimeWeightedAverage &a : t.average) {
+    const uint32_t u = a.last_update();
+    if (u > newest)
+      newest = u;
+  }
+  return newest;
 }
 
 uint8_t PowerFlow::find_device(const std::string &id) const {
@@ -207,6 +234,10 @@ void PowerFlow::setup() {
   if (this->battery_parent_ != nullptr) {
     this->battery_ = make_unique<BatteryScreen>();
     this->battery_->setup(this);
+  }
+  if (this->load_parent_ != nullptr) {
+    this->load_ = make_unique<LoadScreen>();
+    this->load_->setup(this);
   }
 #endif
 }
@@ -642,6 +673,8 @@ void PowerFlow::loop() {
     this->renderer_->update();
   if (this->battery_ != nullptr)
     this->battery_->update();
+  if (this->load_ != nullptr)
+    this->load_->update();
 
   // Stage 2 has no rendering on purpose: §8 wants the numbers trusted before
   // anything is drawn, so they go to the log where they can be checked against
