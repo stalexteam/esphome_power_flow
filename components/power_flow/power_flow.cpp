@@ -356,22 +356,74 @@ static BalanceTerm term_for(const Terminal &t) {
   return b;
 }
 
+/// True while the edge joining the inverter to the bus carries a number.
+///
+/// When it does not — the output meter has dropped out, or its breaker is open
+/// while the apartment is fed around the inverter through the ATS — the two
+/// nodes stop being separable. Their only link is unmeasured, so the inverter's
+/// own draw and the apartment's unmetered remainder become one unknown seen
+/// through one equation, and no arithmetic separates them.
+bool PowerFlow::link_measured_() const {
+  for (const Device &d : this->devices_) {
+    if (d.kind != DeviceKind::BUS || d.source_terminal == INVALID_INDEX)
+      continue;
+    const Terminal &t = this->terminals_[d.source_terminal];
+    return contributes_to_balance(t.state) && !t.stale;
+  }
+  return true;  // no bus, nothing to merge
+}
+
 void PowerFlow::solve_() {
   this->diag_.reliable = true;
 
+  // Two nodes or one? The link decides, and it can change from one cycle to the
+  // next, so it is asked every cycle rather than at setup.
+  const bool split = this->link_measured_();
+
   for (size_t di = 0; di < this->devices_.size(); di++) {
     Device &dev = this->devices_[di];
+
+    // Merged: the inverter is solved as part of the bus, so it has no node of
+    // its own this cycle. Its own `auto` cannot be solved and says so.
+    if (!split && dev.kind == DeviceKind::INVERTER) {
+      for (uint8_t ti : dev.terminals) {
+        Terminal &t = this->terminals_[ti];
+        if (t.is_auto) {
+          t.value = NAN;
+          t.display = NAN;
+          t.state = EdgeState::NO_DATA;
+        }
+      }
+      continue;
+    }
 
     std::vector<uint8_t> edges;
     for (uint8_t ti : dev.terminals) {
       if (this->terminals_[ti].enabled)
         edges.push_back(ti);
     }
+    if (!split && dev.kind == DeviceKind::BUS) {
+      // ...and the bus takes the inverter's edges instead, minus the dead link
+      // between them. What its `auto` then solves for is the inverter's draw
+      // plus the apartment's remainder together — which is honest: the power
+      // that went past the inverter really is apartment load we cannot itemise,
+      // and the part that stayed really is the inverter's. One figure, because
+      // one equation.
+      for (const Device &inv : this->devices_) {
+        if (inv.kind != DeviceKind::INVERTER)
+          continue;
+        for (uint8_t ti : inv.terminals) {
+          const Terminal &t = this->terminals_[ti];
+          if (t.enabled && !t.is_auto && ti != dev.source_terminal)
+            edges.push_back(ti);
+        }
+      }
+    }
     if (dev.kind == DeviceKind::BUS) {
       // The bus is fed by whichever terminal `source:` named, and drained by
       // every consumer. Those live in two different YAML blocks; the node does
       // not care.
-      if (dev.source_terminal != INVALID_INDEX)
+      if (split && dev.source_terminal != INVALID_INDEX)
         edges.push_back(dev.source_terminal);
       for (size_t ti = 0; ti < this->terminals_.size(); ti++) {
         if (this->terminals_[ti].device == INVALID_INDEX && this->terminals_[ti].enabled)
@@ -527,7 +579,15 @@ void PowerFlow::derive_() {
   if (pv != nullptr && pv->enabled)
     p_pv = pv->is_auto ? NAN : balance_value(pv);
 
-  this->diag_.energy = energy_figure(balance_value(in), balance_value(out), balance_value(bat), p_pv,
+  //
+  // With the link to the bus unmeasured there is no separating the inverter's
+  // own draw from what went past it, so neither figure is computable — and an
+  // absent output reads as a genuine zero to `balance_value`, which would make
+  // LOSS quietly absorb the bypassed load and call itself trustworthy. NaN is
+  // the honest input; both figures become dashes and the merged total shows up
+  // on `Other` instead.
+  const float p_out_fig = this->link_measured_() ? balance_value(out) : NAN;
+  this->diag_.energy = energy_figure(balance_value(in), p_out_fig, balance_value(bat), p_pv,
                                      this->battery_deadband_, this->figure_mode_, gates);
 
   // Kept for the details page (§6.8). Both depend on `a` and will therefore

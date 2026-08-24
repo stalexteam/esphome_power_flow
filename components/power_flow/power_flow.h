@@ -345,6 +345,7 @@ class PowerFlow : public Component {
   void resolve_();
   /// Per-node balance, filling in every auto terminal.
   void solve_();
+  bool link_measured_() const;
   /// Baseline fit, inference, efficiencies, runtime estimate.
   void derive_();
 

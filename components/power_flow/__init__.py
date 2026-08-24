@@ -37,6 +37,7 @@ from esphome.components.homeassistant import (
 )
 from esphome.components.homeassistant.sensor import HomeassistantSensor
 from esphome.components.homeassistant.text_sensor import HomeassistantTextSensor
+from esphome.components.lvgl.defines import add_lv_use
 from esphome.components.lvgl.types import lv_obj_t
 import esphome.config_validation as cv
 from esphome.const import (
@@ -508,6 +509,23 @@ def _terminals_of(device):
     return out
 
 
+def _declare_lvgl_widgets(config):
+    """Both screens are built with the raw LVGL C API, but which parts of LVGL
+    exist in the firmware is decided by what the YAML declares: ESPHome compiles
+    a widget in only when a config uses one. Deleting the last hand-written
+    `label:` from a page therefore takes `lv_label_create()` out of the build and
+    the component stops compiling — which is exactly what happened the day the
+    old battery pages were removed.
+
+    So the dependency is declared here, by the component that has it, rather than
+    left to a stray widget on some page. It has to happen during validation: the
+    LVGL component collects this set in its own `to_code`, and ours runs after
+    it because we depend on it.
+    """
+    add_lv_use("label", "arc")
+    return config
+
+
 def _validate_topology(config):
     devices = config[CONF_DEVICES]
     consumers = config[CONF_CONSUMERS]
@@ -648,6 +666,7 @@ CONFIG_SCHEMA = cv.All(
         }
     ).extend(cv.COMPONENT_SCHEMA),
     _validate_topology,
+    _declare_lvgl_widgets,
 )
 
 
