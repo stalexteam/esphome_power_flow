@@ -66,6 +66,7 @@ AUTO_LOAD = ["sensor", "text_sensor", "homeassistant"]
 
 power_flow_ns = cg.esphome_ns.namespace("power_flow")
 PowerFlow = power_flow_ns.class_("PowerFlow", cg.Component)
+PfScreenshot = power_flow_ns.class_("PfScreenshot", cg.Component)
 
 DeviceKind = power_flow_ns.enum("DeviceKind", is_class=True)
 TerminalRole = power_flow_ns.enum("TerminalRole", is_class=True)
@@ -93,6 +94,7 @@ CONF_BIDIRECTIONAL = "bidirectional"
 CONF_CAPACITY = "capacity"
 CONF_CEILING = "ceiling"
 CONF_CONSUMERS = "consumers"
+CONF_DEBUG_SCREENSHOT = "debug_screenshot"
 CONF_DEVICES = "devices"
 CONF_ENABLED = "enabled"
 CONF_ENERGY = "energy"
@@ -110,6 +112,7 @@ CONF_PARENT_ID = "parent_id"
 CONF_POWER = "power"
 CONF_PREFER = "prefer"
 CONF_REQUIRE_STALE_GRID = "require_stale_grid"
+CONF_SCREENSHOT_ID = "screenshot_id"
 CONF_SIDE = "side"
 CONF_SIGN = "sign"
 CONF_SOC = "soc"
@@ -585,6 +588,11 @@ def _declare_lvgl_widgets(config):
     it because we depend on it.
     """
     add_lv_use("label", "arc")
+    # The snapshot renderer is another such module: ESPHome writes its own
+    # lv_conf.h from the collected `lv_uses` (the managed component's Kconfig
+    # is ignored), so a sdkconfig option would not compile it in — this does.
+    if config.get(CONF_DEBUG_SCREENSHOT):
+        add_lv_use("snapshot")
     return config
 
 
@@ -719,6 +727,13 @@ CONFIG_SCHEMA = cv.All(
             cv.Optional(CONF_FIGURE, default="auto"): cv.enum(
                 FIGURE_MODES, lower=True
             ),
+            # Debug tooling, off by default: a Home Assistant service that
+            # dumps the active screen into the serial log as base64, for
+            # tools/screenshot.py to reassemble into a PNG. Needs
+            # `custom_services: true` in the `api:` block (checked in final
+            # validation).
+            cv.GenerateID(CONF_SCREENSHOT_ID): cv.declare_id(PfScreenshot),
+            cv.Optional(CONF_DEBUG_SCREENSHOT, default=False): cv.boolean,
             # Required as a block: a missing face is a blank label, and a blank
             # label on a wall panel is indistinguishable from a value that
             # failed to arrive.
@@ -785,7 +800,27 @@ def _inject_icon_glyphs(config):
     return config
 
 
-FINAL_VALIDATE_SCHEMA = _inject_icon_glyphs
+def _require_custom_services(config):
+    """`register_service()` is compiled out of the api component unless the
+    YAML opts in, and the C++ static_assert that would eventually say so is
+    several minutes of build away. Fail at validation instead."""
+    if not config.get(CONF_DEBUG_SCREENSHOT):
+        return config
+    api_conf = fv.full_config.get().get("api") or {}
+    if not api_conf.get("custom_services"):
+        raise cv.Invalid(
+            "`debug_screenshot: true` registers a Home Assistant service, which "
+            "needs `custom_services: true` in the `api:` block.",
+            [CONF_DEBUG_SCREENSHOT],
+        )
+    return config
+
+
+def _final_validate(config):
+    return _require_custom_services(_inject_icon_glyphs(config))
+
+
+FINAL_VALIDATE_SCHEMA = _final_validate
 
 
 # --------------------------------------------------------------------------
@@ -1102,3 +1137,8 @@ async def to_code(config):
         await _extra_to_code(var, index, consumer)
 
     _ensure_ha_platform_sources()
+
+    if config[CONF_DEBUG_SCREENSHOT]:
+        cg.add_define("USE_POWER_FLOW_SCREENSHOT")
+        screenshot = cg.new_Pvariable(config[CONF_SCREENSHOT_ID])
+        await cg.register_component(screenshot, {})
