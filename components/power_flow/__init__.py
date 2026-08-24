@@ -50,6 +50,9 @@ from esphome.const import (
     CONF_TRIGGER_ID,
 )
 from esphome.core import CORE
+import esphome.final_validate as fv
+
+from .mdi_names import MDI_CODEPOINTS
 
 CODEOWNERS = ["@stalexteam"]
 
@@ -222,6 +225,26 @@ SIGNS = {"in": 1, "out": -1}
 _power = cv.float_with_unit("power", "(W|w|watt|Watt|watts)?")
 
 
+def _icon_value(value):
+    """`mdi:power-plug` or a raw glyph string.
+
+    Names resolve against the pinned Material Design Icons release
+    (mdi_names.py); the raw form stays accepted for glyphs the table does not
+    carry. Either way the config ends up holding the glyph itself, so codegen
+    and the renderers never see the name."""
+    value = cv.string_strict(value)
+    if value.startswith("mdi:"):
+        name = value[4:]
+        cp = MDI_CODEPOINTS.get(name)
+        if cp is None:
+            raise cv.Invalid(
+                f"Unknown Material Design icon 'mdi:{name}'. Names follow "
+                f"https://pictogrammers.com/library/mdi/ — e.g. mdi:power-plug."
+            )
+        return chr(cp)
+    return value
+
+
 # --------------------------------------------------------------------------
 # Home Assistant entities
 #
@@ -285,8 +308,24 @@ def _ha_text_sensor(value):
     return _ha_entity(_HA_TEXT_SENSOR_SCHEMA, value)
 
 
+_LIST_HINT = (
+    "A list of meters is ambiguous, so it needs a name that says what to do "
+    "with it: `sum:` adds the readings (parallel PV strings, each with its own "
+    "meter), `prefer:` takes the first valid one (one line reported twice). "
+    "Choosing wrong is silent — it doubles or halves the figure."
+)
+
+
+def _single_meter(value):
+    if isinstance(value, list):
+        raise cv.Invalid(_LIST_HINT)
+    return _ha_sensor(value)
+
+
 def _power_source(value):
     """`power:` is `meter:` plus the literal `auto` (§5)."""
+    if isinstance(value, list):
+        raise cv.Invalid(_LIST_HINT)
     if isinstance(value, str) and value.strip().lower() == AUTO:
         return AUTO
     return _ha_sensor(value)
@@ -309,7 +348,7 @@ _MEASUREMENT_KEYS = (CONF_METER, CONF_POWER, CONF_SUM, CONF_PREFER)
 # required on a consumer, and voluptuous markers collide on key equality, so
 # each schema adds its own.
 _TERMINAL_KEYS = {
-    cv.Optional(CONF_METER): _ha_sensor,
+    cv.Optional(CONF_METER): _single_meter,
     cv.Optional(CONF_POWER): _power_source,
     cv.Optional(CONF_SUM): _meter_list,
     cv.Optional(CONF_PREFER): _meter_list,
@@ -347,7 +386,7 @@ def _validate_terminal(config):
 
 
 TERMINAL_SCHEMA = cv.All(
-    cv.Schema({**_TERMINAL_KEYS, cv.Optional(CONF_NAME): cv.string, cv.Optional(CONF_ICON): cv.string}),
+    cv.Schema({**_TERMINAL_KEYS, cv.Optional(CONF_NAME): cv.string, cv.Optional(CONF_ICON): _icon_value}),
     _validate_terminal,
 )
 
@@ -360,11 +399,12 @@ CONSUMER_SCHEMA = cv.All(
             cv.Optional(CONF_ID_KEY): cv.string_strict,
             # Whatever else this load happens to report (§7). Absent means no card.
             cv.Optional(CONF_VOLTAGE_S): _ha_sensor,
+            cv.Optional(CONF_CURRENT): _ha_sensor,
             cv.Optional(CONF_TEMPERATURE): _ha_sensor,
             cv.Optional(CONF_LINK): _ha_sensor,
             # Reading the switch needs three states, writing needs a Switch (§5).
             cv.Optional(CONF_CONTROL): _ha_switch,
-            cv.Optional(CONF_ICON): cv.string,
+            cv.Optional(CONF_ICON): _icon_value,
             cv.Optional(CONF_SIDE, default="right"): cv.enum(SIDES, lower=True),
         }
     ),
@@ -446,7 +486,7 @@ DEVICE_SCHEMA = cv.Schema(
         cv.Required(CONF_ID): cv.string_strict,
         cv.Required(CONF_KIND): cv.enum(DEVICE_KINDS, lower=True),
         cv.Optional(CONF_NAME): cv.string,
-        cv.Optional(CONF_ICON): cv.string,
+        cv.Optional(CONF_ICON): _icon_value,
         cv.Optional(CONF_VOLTAGE): _ha_sensor,
         cv.Optional(CONF_SWITCH): _ha_text_sensor,
         cv.Optional(CONF_SOC): _ha_sensor,
@@ -456,13 +496,14 @@ DEVICE_SCHEMA = cv.Schema(
         # card is either a consumer or a device. `voltage:` above doubles as the
         # first of its extra readings.
         cv.Optional(CONF_ID_KEY): cv.string_strict,
+        cv.Optional(CONF_CURRENT): _ha_sensor,
         cv.Optional(CONF_TEMPERATURE): _ha_sensor,
         cv.Optional(CONF_LINK): _ha_sensor,
         cv.Optional(CONF_CONTROL): _ha_switch,
         cv.Optional(CONF_SOURCE): _terminal_ref,
         # Sugar for a plain device meter: it becomes a GENERIC terminal. Needed
         # when a `tap:` hangs off the node (§5).
-        cv.Optional(CONF_METER): _ha_sensor,
+        cv.Optional(CONF_METER): _single_meter,
         cv.Optional(CONF_TERMINALS): cv.Schema(
             {cv.Optional(role): TERMINAL_SCHEMA for role in TERMINAL_ROLES}
         ),
@@ -695,6 +736,59 @@ CONFIG_SCHEMA = cv.All(
 
 
 # --------------------------------------------------------------------------
+# The icon font's glyph list
+# --------------------------------------------------------------------------
+
+# Glyphs the renderers draw on their own, config or not: the fallback icons
+# (flash, sine-wave, sunny, plug-outline, dots), the lost-contact ✕, the Back
+# chevron, the state marker, and the battery screen's check / alert.
+_RENDERER_GLYPHS = (
+    0x0F0241, 0x0F095B, 0x0F05A8, 0x0F1425, 0x0F01D8,
+    0x0F1398, 0x0F0141, 0x0F09DE, 0x0F012C, 0x0F002A,
+)
+
+
+def _config_icons(config):
+    icons = []
+    for device in config.get(CONF_DEVICES, []):
+        if CONF_ICON in device:
+            icons.append(device[CONF_ICON])
+        for term in device.get(CONF_TERMINALS, {}).values():
+            if CONF_ICON in term:
+                icons.append(term[CONF_ICON])
+    for consumer in config.get(CONF_CONSUMERS, []):
+        if CONF_ICON in consumer:
+            icons.append(consumer[CONF_ICON])
+    return icons
+
+
+def _inject_icon_glyphs(config):
+    """This component owns the icon font's glyph list: every `icon:` in the
+    config plus the renderers' fixed set is appended to it here, so the font
+    can be declared with no `glyphs:` at all and never falls out of sync with
+    the diagram."""
+    icon_font = config.get(CONF_STYLE, {}).get(CONF_F_ICON)
+    if icon_font is None:
+        return config
+    fonts = fv.full_config.get().get("font") or []
+    target = next((f for f in fonts if str(f.get(CONF_ID)) == str(icon_font)), None)
+    if target is None:
+        return config
+    glyphs = list(target.get("glyphs") or [])
+    have = {ch for entry in glyphs for ch in entry}
+    for icon in [chr(cp) for cp in _RENDERER_GLYPHS] + _config_icons(config):
+        for ch in icon:
+            if ch not in have:
+                glyphs.append(ch)
+                have.add(ch)
+    target["glyphs"] = glyphs
+    return config
+
+
+FINAL_VALIDATE_SCHEMA = _inject_icon_glyphs
+
+
+# --------------------------------------------------------------------------
 # Codegen
 # --------------------------------------------------------------------------
 async def _details_to_code(var, index, det):
@@ -756,7 +850,7 @@ async def _extra_to_code(var, index, conf, device=False):
         if entity_conf is not None:
             field(name, cg.safe_exp(entity_conf[CONF_ENTITY_ID]))
 
-    keys = ((CONF_TEMPERATURE, "temperature"), (CONF_LINK, "link"))
+    keys = ((CONF_CURRENT, "current"), (CONF_TEMPERATURE, "temperature"), (CONF_LINK, "link"))
     if not device:  # a device's voltage is already wired for the flow card
         keys = ((CONF_VOLTAGE_S, "voltage"),) + keys
     for key, name in keys:

@@ -54,9 +54,9 @@ static const uint32_t MDI_CLOSE_THICK = 0x0F1398;
 
 /// The most cards §7 can produce, so the tree is built once and hidden per
 /// subject rather than rebuilt on every tap.
-static const size_t MAX_EXTRAS = 3;
+static const size_t MAX_EXTRAS = 4;
 /// power, switch, voltage, temperature, link.
-static const size_t MAX_ROWS = 5;
+static const size_t MAX_ROWS = 6;
 
 static const char *const DASH = "\xE2\x80\x94";
 
@@ -320,7 +320,7 @@ void LoadScreen::build_extras_(lv_obj_t *root) {
   const int cap_y = (EXTRA_H - 2 - (ch + 9 + vh)) / 2;
   for (size_t i = 0; i < MAX_EXTRAS; i++) {
     Extra &e = this->extras_[i];
-    e.card = this->card_(root, EXTRA_X[i], 0, EXTRA_W, EXTRA_H, EXTRA_R);
+    e.card = this->card_(root, EXTRA_X[i % 3], 0, EXTRA_W, EXTRA_H, EXTRA_R);
     e.caption = this->label_(e.card, s.s10, 0, cap_y, EXTRA_W - 2, LV_TEXT_ALIGN_CENTER,
                              pal::text_dim);
     lv_obj_set_style_text_letter_space(e.caption, 1, LV_PART_MAIN);
@@ -396,6 +396,14 @@ const NodeDetails *LoadScreen::extra_() const {
   return t != nullptr ? t->extra.get() : nullptr;
 }
 
+/// A device's `voltage:` is subscribed once, on the device, for the flow card;
+/// the detail card reads the same sensor rather than a second subscription.
+static sensor::Sensor *voltage_of(const NodeDetails *x, const Device *d) {
+  if (x != nullptr && x->voltage != nullptr)
+    return x->voltage;
+  return d != nullptr ? d->voltage : nullptr;
+}
+
 std::string LoadScreen::clock_at_(uint32_t when) const {
   if (when == 0 || this->pf_->rtc() == nullptr)
     return "";
@@ -449,7 +457,7 @@ void LoadScreen::layout_() {
   // card at all, and the row simply gets shorter (§7).
   size_t n = 0;
   if (x != nullptr) {
-    for (sensor::Sensor *s : {x->voltage, x->temperature, x->link}) {
+    for (sensor::Sensor *s : {voltage_of(x, this->dev_()), x->current, x->temperature, x->link}) {
       if (s == nullptr)
         continue;
       Extra &e = this->extras_[n];
@@ -688,7 +696,8 @@ void LoadScreen::update_extras_() {
     const char *unit;
     int decimals;
   };
-  const Def defs[3] = {{x->voltage, "VOLTAGE", "V", 0},
+  const Def defs[4] = {{voltage_of(x, this->dev_()), "VOLTAGE", "V", 0},
+                       {x->current, "CURRENT", "A", 1},
                        {x->temperature, "TEMPERATURE", "\xC2\xB0" "C", 1},
                        {x->link, "LINK", "lqi", 0}};
   size_t n = 0;
@@ -710,9 +719,10 @@ void LoadScreen::update_rows_() {
     const char *id;
     const char *label;
   };
-  const Def defs[5] = {{x->power_id, "POWER"},
+  const Def defs[6] = {{x->power_id, "POWER"},
                        {x->switch_id, "SWITCH"},
                        {x->voltage_id, "VOLTAGE"},
+                       {x->current_id, "CURRENT"},
                        {x->temperature_id, "TEMPERATURE"},
                        {x->link_id, "LINK"}};
   size_t n = 0;

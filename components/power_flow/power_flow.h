@@ -124,6 +124,7 @@ struct PowerFlowStyle {
 /// with the blocks it cannot fill simply absent (§2).
 struct NodeDetails {
   sensor::Sensor *voltage{nullptr};
+  sensor::Sensor *current{nullptr};
   sensor::Sensor *temperature{nullptr};
   sensor::Sensor *link{nullptr};
   /// A second subscription to the switch entity, and deliberately so: the state
@@ -138,6 +139,7 @@ struct NodeDetails {
   const char *power_id{nullptr};
   const char *switch_id{nullptr};
   const char *voltage_id{nullptr};
+  const char *current_id{nullptr};
   const char *temperature_id{nullptr};
   const char *link_id{nullptr};
 };
