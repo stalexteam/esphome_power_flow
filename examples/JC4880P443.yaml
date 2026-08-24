@@ -403,9 +403,10 @@ font:
   - { file: "gfonts://Montserrat@700", id: f_s22, size: 22, bpp: 4, glyphsets: *latin_cyr }
 
   # JetBrains Mono, digits and the handful of symbols that ride along with a
-  # number. The glyph set is tiny, which is what makes six sizes affordable.
+  # number ("lqi" is the LINK tile's unit). The glyph set is tiny, which is
+  # what makes six sizes affordable.
   - { file: "gfonts://JetBrains+Mono@500", id: f_m12, size: 12, bpp: 4, glyphs: &mono_glyphs
-      "0123456789.,+-%°−— VAWhkmC" }
+      "0123456789.,+-%°−— VAWhkmCilq" }
   # The one mono face that carries text rather than numbers: entity ids and the
   # node key on the detail screen. The others stay digits-only.
   - { file: "gfonts://JetBrains+Mono@600", id: f_m14, size: 14, bpp: 4,
