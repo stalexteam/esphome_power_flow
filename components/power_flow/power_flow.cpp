@@ -627,17 +627,6 @@ void PowerFlow::derive_() {
   this->diag_.charger_eff = charger_efficiency(p_in, p_out, p_bat, a, gates);
   this->diag_.inverter_eff =
       inverter_efficiency(p_out, is_valid(p_bat) && p_bat < 0 ? -p_bat : NAN, a, gates);
-
-  const Device *battery = this->find_kind_(DeviceKind::BATTERY);
-  if (battery != nullptr && out != nullptr) {
-    const float soc = battery->soc != nullptr ? battery->soc->state : NAN;
-    const float cap = battery->capacity_remaining != nullptr ? battery->capacity_remaining->state : NAN;
-    const float volt = battery->voltage != nullptr ? battery->voltage->state : NAN;
-    // No measured discharge efficiency yet, so none is assumed: without a
-    // trustworthy eta this stays a dash rather than a guess (§6.9).
-    this->diag_.runtime_hours =
-        runtime_hours(cap, volt, this->discharge_eta_, p_out, soc, this->soc_cutoff_);
-  }
 }
 
 // ---------------------------------------------------------------------------
@@ -697,9 +686,9 @@ void PowerFlow::loop() {
   ESP_LOGI(TAG, "%s", line.c_str());
 
   const EnergyReading &e = this->diag_.energy;
-  ESP_LOGI(TAG, "losses=%.1fW%s eff=%.1f%%%s | %.2fh | supply=%d grid=%d %s%s | a=%.1f b=%+.4f",
+  ESP_LOGI(TAG, "losses=%.1fW%s eff=%.1f%%%s | supply=%d grid=%d %s%s | a=%.1f b=%+.4f",
            e.losses, e.show_losses ? "*" : "", e.efficiency * 100.0f, e.show_efficiency ? "*" : "",
-           this->diag_.runtime_hours, (int) this->diag_.supply, (int) this->diag_.grid,
+           (int) this->diag_.supply, (int) this->diag_.grid,
            this->diag_.reliable ? "ok" : "UNRELIABLE", this->diag_.ha_contact ? "" : " NO-HA",
            this->diag_.baseline_a, this->diag_.baseline_b);
 }

@@ -91,7 +91,6 @@ CONF_CAPACITY = "capacity"
 CONF_CEILING = "ceiling"
 CONF_CONSUMERS = "consumers"
 CONF_DEVICES = "devices"
-CONF_DISCHARGE_ETA = "discharge_eta"
 CONF_ENABLED = "enabled"
 CONF_ENERGY = "energy"
 CONF_FIGURE = "figure"
@@ -111,7 +110,6 @@ CONF_REQUIRE_STALE_GRID = "require_stale_grid"
 CONF_SIDE = "side"
 CONF_SIGN = "sign"
 CONF_SOC = "soc"
-CONF_SOC_CUTOFF = "soc_cutoff"
 CONF_SOURCE = "source"
 CONF_STALE_AFTER = "stale_after"
 CONF_STALENESS = "staleness"
@@ -222,18 +220,6 @@ INFERENCE_MODES = {
 SIGNS = {"in": 1, "out": -1}
 
 _power = cv.float_with_unit("power", "(W|w|watt|Watt|watts)?")
-
-
-def _ratio(value):
-    """A dimensionless efficiency in (0, 1]."""
-    return cv.float_range(min=0, max=1, min_included=False)(cv.float_(value))
-
-
-def _percent(value):
-    """A percentage on the 0..100 scale, matching Home Assistant's SOC."""
-    if isinstance(value, str) and value.strip().endswith("%"):
-        value = value.strip()[:-1]
-    return cv.float_range(min=0, max=100)(cv.float_(value))
 
 
 # --------------------------------------------------------------------------
@@ -684,7 +670,6 @@ CONFIG_SCHEMA = cv.All(
             # `binary_sensor: platform: status` — the only sound "HA is
             # connected" flag (§2).
             cv.Optional(CONF_STATUS): cv.use_id(binary_sensor.BinarySensor),
-            cv.Optional(CONF_SOC_CUTOFF): _percent,
             # |P_battery| below which the battery counts as at rest. One key,
             # not two: it gates both the headline energy figure and the
             # baseline fit's sampling condition (§6.6, §6.8).
@@ -693,10 +678,6 @@ CONFIG_SCHEMA = cv.All(
             cv.Optional(CONF_FIGURE, default="auto"): cv.enum(
                 FIGURE_MODES, lower=True
             ),
-            # No default on purpose: the runtime estimate is the most
-            # important line on the screen, and without a measured figure it
-            # must stay a dash rather than inherit a guessed 0.9 (§6.9).
-            cv.Optional(CONF_DISCHARGE_ETA): _ratio,
             cv.Optional(CONF_STYLE, default={}): FONTS_SCHEMA,
             cv.Optional(CONF_INFERENCE, default={}): INFERENCE_SCHEMA,
             cv.Required(CONF_DEVICES): cv.All(
@@ -935,12 +916,6 @@ async def to_code(config):
     cg.add(var.set_idle_below(config[CONF_IDLE_BELOW]))
     cg.add(var.set_battery_deadband(config[CONF_BATTERY_DEADBAND]))
     cg.add(var.set_figure_mode(config[CONF_FIGURE]))
-    if (soc_cutoff := config.get(CONF_SOC_CUTOFF)) is not None:
-        cg.add(var.set_soc_cutoff(soc_cutoff))
-    if (discharge_eta := config.get(CONF_DISCHARGE_ETA)) is not None:
-        # Absent, PowerFlow::discharge_eta_ stays NaN and the runtime estimate
-        # shows a dash rather than a guess (§6.9).
-        cg.add(var.set_discharge_eta(discharge_eta))
     if (status := config.get(CONF_STATUS)) is not None:
         cg.add(var.set_status_sensor(await cg.get_variable(status)))
 

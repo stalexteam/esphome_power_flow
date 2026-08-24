@@ -445,14 +445,5 @@ struct EnergyReading {
 EnergyReading energy_figure(float p_in, float p_out, float p_battery, float p_pv, float deadband,
                             FigureMode mode, const DerivedGates &g);
 
-/// hours = usable_capacity x voltage x eta / load
-///
-/// Capacity below the inverter's cutoff is unreachable, so it is removed first:
-/// usable_ah = capacity_remaining_ah * (soc - soc_cutoff) / soc.
-/// NaN when the load is negligible, the SOC is at or below the cutoff, or any
-/// input is missing.
-float runtime_hours(float capacity_remaining_ah, float voltage, float eta, float load_w, float soc,
-                    float soc_cutoff);
-
 }  // namespace power_flow
 }  // namespace esphome

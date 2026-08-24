@@ -67,10 +67,6 @@ constexpr double BALANCE_EPSILON = 1e-3;
 /// standing draw explain the data equally well. 10 W of spread.
 constexpr double MIN_X_VARIANCE = 100.0;
 
-/// Division guard for runtime_hours(). Not a physical threshold: below a watt
-/// the load reading carries no information and the quotient explodes.
-constexpr float MIN_RUNTIME_LOAD_W = 1.0f;
-
 }  // namespace
 
 bool is_valid(float v) {
@@ -721,32 +717,6 @@ EnergyReading energy_figure(float p_in, float p_out, float p_battery, float p_pv
     r.efficiency = static_cast<float>(efficiency);
 
   return r;
-}
-
-float runtime_hours(float capacity_remaining_ah, float voltage, float eta, float load_w, float soc,
-                    float soc_cutoff) {
-  if (!is_valid(capacity_remaining_ah) || !is_valid(voltage) || !is_valid(eta) || !is_valid(load_w) ||
-      !is_valid(soc) || !is_valid(soc_cutoff))
-    return NOT_A_NUMBER;
-  if (capacity_remaining_ah < 0.0f || voltage <= 0.0f)
-    return NOT_A_NUMBER;
-  if (!(eta > 0.0f) || eta > 1.0f)
-    return NOT_A_NUMBER;
-  if (load_w < MIN_RUNTIME_LOAD_W)
-    return NOT_A_NUMBER;
-  // At or below the cutoff the remaining charge is unreachable, so there is no
-  // number to show — not a small one (§6.9).
-  // A SOC outside 0..100 is a broken sensor, not a very full battery: taking
-  // 150% at face value hands back a runtime the pack cannot deliver.
-  if (soc_cutoff < 0.0f || !(soc > 0.0f) || soc > 100.0f || !(soc > soc_cutoff))
-    return NOT_A_NUMBER;
-
-  const double usable_ah = static_cast<double>(capacity_remaining_ah) *
-                           (static_cast<double>(soc) - static_cast<double>(soc_cutoff)) /
-                           static_cast<double>(soc);
-  const double hours = usable_ah * static_cast<double>(voltage) * static_cast<double>(eta) /
-                       static_cast<double>(load_w);
-  return std::isfinite(hours) ? static_cast<float>(hours) : NOT_A_NUMBER;
 }
 
 }  // namespace power_flow
