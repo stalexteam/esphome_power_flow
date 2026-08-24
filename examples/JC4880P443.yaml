@@ -397,14 +397,6 @@ font:
     size: 26
     bpp: 4
     glyphs: [
-      "\U000F091F",   # wifi-strength-1
-      "\U000F0922",   # wifi-strength-2
-      "\U000F0925",   # wifi-strength-3
-      "\U000F0928",   # wifi-strength-4
-      "\U000F092F",   # wifi-strength-outline  (connected, RSSI unknown yet)
-      "\U000F092E",   # wifi-strength-off-outline
-      "\U000F0164",   # cloud-off-outline      (Wi-Fi up, no Home Assistant)
-
       # power_flow diagram. Codepoints read out of the webfont repo's
       # scss/_variables.scss at the tag above, not from memory.
       "󰉁",   # flash                  city grid
