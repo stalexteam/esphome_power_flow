@@ -46,6 +46,11 @@ static const uint32_t SW_BORDER_OFF = 0x2E3E4C;
 
 static const uint32_t MDI_CHEVRON_LEFT = 0x0F0141;
 static const uint32_t MDI_PLUG_OUTLINE = 0x0F1425;
+/// The state marker. A glyph rather than U+25CF, which is in neither face's
+/// character set — and rather than a drawn circle, so the dot and the ✕ stay
+/// one label whose text is swapped.
+static const uint32_t MDI_CIRCLE = 0x0F09DE;
+static const uint32_t MDI_CLOSE_THICK = 0x0F1398;
 
 /// The most cards §7 can produce, so the tree is built once and hidden per
 /// subject rather than rebuilt on every tap.
@@ -211,11 +216,11 @@ void LoadScreen::build_back_(lv_obj_t *root) {
   lv_obj_add_event_cb(
       b,
       [](lv_event_t *e) {
-        auto *self = static_cast<LoadScreen *>(lv_obj_get_user_data(lv_event_get_target_obj(e)));
+        auto *self = static_cast<LoadScreen *>(lv_event_get_user_data(e));
         if (self != nullptr && self->pf_ != nullptr && self->pf_->on_back() != nullptr)
           self->pf_->on_back()->trigger();
       },
-      LV_EVENT_CLICKED, nullptr);
+      LV_EVENT_CLICKED, this);
 
   const std::string chev = utf8(MDI_CHEVRON_LEFT);
   const int iw = text_w(s.icon, chev.c_str()), tw = text_w(s.s16, "Back");
@@ -251,7 +256,7 @@ void LoadScreen::build_state_(lv_obj_t *root) {
 
   // The marker is a label rather than a shape: a dot and a ✕ are the same slot
   // in two states, and swapping the glyph is cheaper than swapping objects.
-  this->st_marker_ = this->label_(this->st_card_, s.s22, PAD_X, PAD_Y + 18, 24,
+  this->st_marker_ = this->label_(this->st_card_, s.icon, PAD_X, PAD_Y + 16, 26,
                                   LV_TEXT_ALIGN_LEFT, pal::load);
   this->st_word_ = this->label_(this->st_card_, s.s22, PAD_X + 26, PAD_Y + 16,
                                 CONTENT_W - 2 * PAD_X - 26, LV_TEXT_ALIGN_LEFT, pal::text);
@@ -282,7 +287,7 @@ void LoadScreen::build_switch_(lv_obj_t *root) {
   // anything. 84 x 44 clears the 44 px minimum on its short axis (§9).
   lv_obj_add_flag(this->sw_track_, LV_OBJ_FLAG_CLICKABLE);
   lv_obj_set_user_data(this->sw_track_, this);
-  lv_obj_add_event_cb(this->sw_track_, LoadScreen::toggle_cb_, LV_EVENT_CLICKED, nullptr);
+  lv_obj_add_event_cb(this->sw_track_, LoadScreen::toggle_cb_, LV_EVENT_CLICKED, this);
 
   this->sw_knob_ = this->plain_(this->sw_track_);
   lv_obj_set_size(this->sw_knob_, 34, 34);
@@ -516,7 +521,7 @@ void LoadScreen::update_state_() {
   switch (t->state) {
     case EdgeState::OPEN:
       word = "Switched off";
-      marker = "\xE2\x97\x8F";  // ●
+      marker = utf8(MDI_CIRCLE);
       colour = pal::text_dim;
       snprintf(buf, sizeof(buf), "%s reports off%s%s",
                x != nullptr && x->switch_id != nullptr ? x->switch_id : "the switch",
@@ -525,7 +530,7 @@ void LoadScreen::update_state_() {
     case EdgeState::DE_ENERGIZED:
     case EdgeState::NO_DATA:
       word = "No data";
-      marker = "\xC3\x97";  // ×
+      marker = utf8(MDI_CLOSE_THICK);
       colour = pal::alert;
       border = STATE_BORDER_NODATA;
       // §4: name the entity, name the time, name the threshold. A reason that
@@ -537,13 +542,13 @@ void LoadScreen::update_state_() {
       break;
     case EdgeState::IDLE:
       word = "Idle";
-      marker = "\xE2\x97\x8F";
+      marker = utf8(MDI_CIRCLE);
       colour = pal::text_off;
       snprintf(buf, sizeof(buf), "Below the idle threshold of %.0f W", this->pf_->idle_below());
       break;
     default:
       word = "Active";
-      marker = "\xE2\x97\x8F";
+      marker = utf8(MDI_CIRCLE);
       colour = pal::load;
       snprintf(buf, sizeof(buf), "Draw above the idle threshold of %.0f W",
                this->pf_->idle_below());
@@ -603,9 +608,13 @@ void LoadScreen::update_switch_() {
 }
 
 void LoadScreen::toggle_cb_(lv_event_t *e) {
-  auto *self = static_cast<LoadScreen *>(lv_obj_get_user_data(lv_event_get_target_obj(e)));
-  if (self != nullptr)
-    self->on_toggle_();
+  // `self` comes from the registration, not from the object: that is the form
+  // the node taps already use and demonstrably works on this build.
+  auto *self = static_cast<LoadScreen *>(lv_event_get_user_data(e));
+  if (self == nullptr)
+    return;
+  ESP_LOGI(TAG, "toggle tapped");
+  self->on_toggle_();
 }
 
 void LoadScreen::on_toggle_() {
@@ -620,7 +629,7 @@ void LoadScreen::on_toggle_() {
     x->control->turn_on();
   else
     x->control->turn_off();
-  ESP_LOGI(TAG, "%s -> %s", x->switch_id != nullptr ? x->switch_id : "switch",
+  ESP_LOGI(TAG, "commanding %s -> %s", x->switch_id != nullptr ? x->switch_id : "switch",
            target ? "on" : "off");
   this->update_switch_();
 }

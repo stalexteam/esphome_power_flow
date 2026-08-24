@@ -204,11 +204,11 @@ void BatteryScreen::build_back_(lv_obj_t *root) {
   lv_obj_add_event_cb(
       b,
       [](lv_event_t *e) {
-        auto *self = static_cast<BatteryScreen *>(lv_obj_get_user_data(lv_event_get_target_obj(e)));
+        auto *self = static_cast<BatteryScreen *>(lv_event_get_user_data(e));
         if (self != nullptr && self->pf_ != nullptr && self->pf_->on_back() != nullptr)
           self->pf_->on_back()->trigger();
       },
-      LV_EVENT_CLICKED, nullptr);
+      LV_EVENT_CLICKED, this);
 
   // The chevron and the word are laid out as one group, centred in the button.
   const std::string chev = utf8(MDI_CHEVRON_LEFT);
