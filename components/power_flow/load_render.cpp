@@ -21,7 +21,7 @@ static const char *const TAG = "power_flow.load";
 // by layout_(), because which blocks apply depends on the subject and §2 is
 // explicit that the cursor is calculated rather than tabulated per consumer.
 // ---------------------------------------------------------------------------
-static const int16_t SCREEN_W = 480;
+static const int16_t SCREEN_W = 480, SCREEN_H = 800;
 static const int16_t MARGIN = 16;
 static const int16_t CONTENT_W = SCREEN_W - 2 * MARGIN;  // 448
 static const int16_t GAP = 16;
@@ -360,13 +360,27 @@ void LoadScreen::setup(PowerFlow *pf) {
   lv_obj_set_style_bg_color(this->root_, lv_color_hex(pal::bg), LV_PART_MAIN);
   lv_obj_set_style_bg_opa(this->root_, LV_OPA_COVER, LV_PART_MAIN);
 
-  this->build_header_(this->root_);
-  this->build_state_(this->root_);
-  this->build_switch_(this->root_);
-  this->build_power_(this->root_);
-  this->build_extras_(this->root_);
-  this->build_rows_(this->root_);
-  this->build_back_(this->root_);  // last, so it sits above everything
+  // Everything scrolls except `Back` — the battery screen's rule, for the
+  // same reason: if the only way off the screen could scroll away, a panel
+  // with no hardware key would strand the reader. Needed since a card can
+  // carry four extra tiles and six entity rows — taller than the screen.
+  this->scroll_ = this->plain_(this->root_);
+  lv_obj_set_pos(this->scroll_, 0, 0);
+  lv_obj_set_size(this->scroll_, SCREEN_W, SCREEN_H);
+  lv_obj_add_flag(this->scroll_, LV_OBJ_FLAG_SCROLLABLE);
+  lv_obj_add_flag(this->scroll_, LV_OBJ_FLAG_SCROLL_MOMENTUM);
+  lv_obj_add_flag(this->scroll_, LV_OBJ_FLAG_SCROLL_ELASTIC);
+  lv_obj_set_scroll_dir(this->scroll_, LV_DIR_VER);
+  lv_obj_set_scrollbar_mode(this->scroll_, LV_SCROLLBAR_MODE_AUTO);
+  lv_obj_set_style_pad_bottom(this->scroll_, GAP, LV_PART_MAIN);
+
+  this->build_header_(this->scroll_);
+  this->build_state_(this->scroll_);
+  this->build_switch_(this->scroll_);
+  this->build_power_(this->scroll_);
+  this->build_extras_(this->scroll_);
+  this->build_rows_(this->scroll_);
+  this->build_back_(this->root_);  // pinned above the scroll
 
   ESP_LOGI(TAG, "load screen built: up to %u extra cards, %u entity rows",
            (unsigned) MAX_EXTRAS, (unsigned) MAX_ROWS);
@@ -766,6 +780,9 @@ void LoadScreen::update() {
     this->shown_terminal_ = t;
     this->sw_pending_ = false;
     this->sw_shown_ = false;
+    // A new subject starts at the top, not wherever the last one was left.
+    if (this->scroll_ != nullptr)
+      lv_obj_scroll_to_y(this->scroll_, 0, LV_ANIM_OFF);
   }
   this->update_header_();
   this->update_state_();

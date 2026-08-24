@@ -109,6 +109,7 @@ class LoadScreen {
   void on_toggle_();
 
   lv_obj_t *root_{nullptr};
+  lv_obj_t *scroll_{nullptr};  ///< everything but `Back` lives in here
 
   // --- header
   lv_obj_t *h_icon_{nullptr}, *h_name_{nullptr}, *h_key_{nullptr};
