@@ -7,10 +7,13 @@ screen, and a detail screen for whichever node was tapped. Everything is read
 from Home Assistant; the panel measures nothing itself.
 
 <p>
-  <img src="docs/img/01-overview.png" width="30%" alt="Power flow screen"/>
-  <img src="docs/img/02-battery.png" width="30%" alt="Battery screen"/>
-  <img src="docs/img/03-load-switch.png" width="30%" alt="Node detail screen"/>
+  <img src="docs/img/01-flow.png" width="24%" alt="Power flow screen"/>
+  <img src="docs/img/02-battery.png" width="24%" alt="Battery screen"/>
+  <img src="docs/img/03-consumer.png" width="24%" alt="Consumer detail screen"/>
+  <img src="docs/img/04-inverter.png" width="24%" alt="Inverter detail screen"/>
 </p>
+
+*Live screenshots from the panel, not mockups.*
 
 - The YAML stays declarative — entities, names, icons, fonts. Geometry,
   colours, arithmetic and animation live in C++.
