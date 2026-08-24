@@ -367,6 +367,9 @@ void LoadScreen::setup(PowerFlow *pf) {
   this->scroll_ = this->plain_(this->root_);
   lv_obj_set_pos(this->scroll_, 0, 0);
   lv_obj_set_size(this->scroll_, SCREEN_W, SCREEN_H);
+  // plain_() strips CLICKABLE, but a scroll container must receive presses
+  // or it never scrolls — the battery screen re-adds it the same way.
+  lv_obj_add_flag(this->scroll_, LV_OBJ_FLAG_CLICKABLE);
   lv_obj_add_flag(this->scroll_, LV_OBJ_FLAG_SCROLLABLE);
   lv_obj_add_flag(this->scroll_, LV_OBJ_FLAG_SCROLL_MOMENTUM);
   lv_obj_add_flag(this->scroll_, LV_OBJ_FLAG_SCROLL_ELASTIC);
