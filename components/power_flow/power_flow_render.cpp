@@ -1131,6 +1131,14 @@ void FlowRenderer::build_(lv_obj_t *parent) {
     lv_obj_add_flag(this->scroll_, LV_OBJ_FLAG_SCROLL_ELASTIC);
     lv_obj_set_scroll_dir(this->scroll_, LV_DIR_VER);
     lv_obj_set_scrollbar_mode(this->scroll_, LV_SCROLLBAR_MODE_AUTO);
+    // Without this the press lands on nothing: LVGL hit-tests clickable objects
+    // only, and every card here is deliberately not one. The same omission made
+    // the battery screen refuse to scroll.
+    lv_obj_add_flag(this->scroll_, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_set_style_bg_color(this->scroll_, lv_color_hex(pal::divider), LV_PART_SCROLLBAR);
+    lv_obj_set_style_bg_opa(this->scroll_, LV_OPA_60, LV_PART_SCROLLBAR);
+    lv_obj_set_style_width(this->scroll_, 4, LV_PART_SCROLLBAR);
+    lv_obj_set_style_radius(this->scroll_, 2, LV_PART_SCROLLBAR);
   }
 
   // --- INVENTED: the "Home Assistant is gone" banner (§6.2) ----------------

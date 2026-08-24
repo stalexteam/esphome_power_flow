@@ -33,6 +33,7 @@ static const int16_t BACK_X = 16, BACK_Y = 12, BACK_W = 96, BACK_H = 40;
 
 static const int16_t RING_X = 140, RING_Y = 68, RING_D = 200;
 static const int16_t RING_STROKE = 15;
+static const int16_t SOC_NUM_NUDGE = 5;
 
 /// Three across, twice: voltage/current/power, then the temperatures.
 static const int16_t TRIPLE_W = 144, TRIPLE_H = 76, TRIPLE_R = 13;
@@ -259,7 +260,12 @@ void BatteryScreen::build_ring_(lv_obj_t *c) {
   const int total = nh + gap + ph + gap + 2 + sh;
   int y = cy - total / 2;
 
-  this->soc_num_ = this->label_(c, s.m72, RING_X, y, RING_D, LV_TEXT_ALIGN_CENTER, pal::text);
+  // Optically 5 px lower than the arithmetic centre. At 72 px the digits carry a
+  // lot of empty space below their baseline, so a group centred by line box sits
+  // visibly high inside the ring. The `%` and the charge state do not move: the
+  // nudge is applied to the label, not to the running y.
+  this->soc_num_ =
+      this->label_(c, s.m72, RING_X, y + SOC_NUM_NUDGE, RING_D, LV_TEXT_ALIGN_CENTER, pal::text);
   y += nh + gap;
   this->soc_pct_ = this->label_(c, s.m28, RING_X, y, RING_D, LV_TEXT_ALIGN_CENTER, pal::text_dim);
   lv_label_set_text(this->soc_pct_, "%");
@@ -390,7 +396,10 @@ void BatteryScreen::build_cells_(lv_obj_t *c) {
     cell.box = this->card_(c, CELL_X[col], CELL_Y0 + CELL_PITCH * row, CELL_W, CELL_H, CELL_R);
     cell.index = this->label_(cell.box, s.m16, CELL_PAD, (CELL_H - 2 - ih) / 2, 40,
                               LV_TEXT_ALIGN_LEFT, pal::text_dim);
-    char buf[8];
+    // Wide enough for any 32-bit value: the schema caps the pack at 32 cells,
+    // but nothing in this function says so and the compiler is right not to
+    // assume it.
+    char buf[12];
     snprintf(buf, sizeof(buf), "%u", (unsigned) (i + 1));
     lv_label_set_text(cell.index, buf);
     cell.value = this->label_(cell.box, s.m22, CELL_PAD, (CELL_H - 2 - vh) / 2,
@@ -418,6 +427,22 @@ void BatteryScreen::setup(PowerFlow *pf) {
   lv_obj_add_flag(this->scroll_, LV_OBJ_FLAG_SCROLL_ELASTIC);
   lv_obj_set_scroll_dir(this->scroll_, LV_DIR_VER);
   lv_obj_set_scrollbar_mode(this->scroll_, LV_SCROLLBAR_MODE_AUTO);
+
+  // A press has to land on something for LVGL to find a scrollable ancestor:
+  // `lv_indev_search_obj` only considers clickable objects, and everything built
+  // here is deliberately not clickable, so without this the finger hits nothing
+  // and the page does not move. The container catches the press; LVGL then
+  // decides between a click and a drag on its own.
+  lv_obj_add_flag(this->scroll_, LV_OBJ_FLAG_CLICKABLE);
+
+  // `lv_obj_remove_style_all` took the scrollbar's style with it, and §2 makes
+  // the scrollbar the only affordance there is — no arrows, no caption. An
+  // invisible one is the same as none.
+  lv_obj_set_style_bg_color(this->scroll_, lv_color_hex(pal::divider), LV_PART_SCROLLBAR);
+  lv_obj_set_style_bg_opa(this->scroll_, LV_OPA_60, LV_PART_SCROLLBAR);
+  lv_obj_set_style_width(this->scroll_, 4, LV_PART_SCROLLBAR);
+  lv_obj_set_style_radius(this->scroll_, 2, LV_PART_SCROLLBAR);
+  lv_obj_set_style_pad_right(this->scroll_, 3, LV_PART_SCROLLBAR);
 
   this->build_ring_(this->scroll_);
   this->build_triples_(this->scroll_);
