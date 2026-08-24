@@ -7,7 +7,6 @@ from Home Assistant; the panel measures nothing itself.
 
 <p>
   <img src="docs/img/01-grid-ongrid-pv.png" width="30%" alt="Power flow screen"/>
-  <img src="docs/img/04-battery-screen.png" width="30%" alt="Battery screen"/>
   <img src="docs/img/05-load-active.png" width="30%" alt="Node detail screen"/>
 </p>
 
