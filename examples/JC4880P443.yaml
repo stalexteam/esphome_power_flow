@@ -1,0 +1,485 @@
+# =============================================================================
+#  Guition JC4880P443  (ESP32-P4 + ESP32-C6, 4.3" 480x800 MIPI-DSI)  —
+#  power-flow wall panel. Pulls everything from Home Assistant; measures
+#  nothing itself.
+#
+#  This is the complete, deployed configuration of the installation the
+#  component was built for. To adapt it: replace the entity ids in section 1
+#  with your own, put your credentials in secrets.yaml, and leave sections 2
+#  and 3 alone unless your hardware differs.
+#
+#  One file, three sections, ordered by how often they change:
+#    1. WHAT THE PANEL SHOWS   — nodes, consumers, entity ids, names, tuning.
+#                                The only section that is routinely edited.
+#    2. SITE                   — network and services. Credentials themselves
+#                                stay in secrets.yaml.
+#    3. MODULE CONSTANTS       — the board's wiring, fonts, LVGL pages and the
+#                                power_flow scaffolding. Nothing here depends
+#                                on the installation; touch only when the
+#                                hardware or the component's interface changes.
+# =============================================================================
+
+
+# #############################################################################
+# ##  1. WHAT THE PANEL SHOWS                                                ##
+# #############################################################################
+
+substitutions:
+  name: bms-panel
+  friendly_name: "BMS Panel"
+
+# =============================================================================
+#  Power flow diagram
+#
+#  Entity ids are the real ones from the installation; the battery
+#  ids carry the `bms24v` device-name prefix (doubled where the sensor's own
+#  name repeats it). Verify each one in Developer Tools -> States. Every meter
+#  and every switch below is subscribed to programmatically by the component —
+#  there is no parallel `sensor:` block for them. Switches arrive as *text*
+#  sensors on purpose: only an explicit `off` opens an edge, while `absent`,
+#  `unknown` and `null` all mean closed. The two Moes plugs
+#  (WallSocket_PC, WallSocket_automation) publish `"state": null` forever, so
+#  they simply declare no `switch:` at all.
+# =============================================================================
+power_flow:
+  devices:
+    - id: grid
+      kind: grid
+      icon: "󰉁"        # flash
+      name: "City grid"
+      key: grid
+      voltage: sensor.acin_voltage      # diagnostic only on the diagram;
+                                        # a reading of its own on the detail screen
+      temperature: sensor.acin_temperature
+      link: sensor.acin_linkquality
+      # Safe to expose: opening this breaker does not black the flat out, it
+      # moves it onto the battery — which is what the inverter is for, and what
+      # the outage test on 2026-08-23 demonstrated.
+      control: switch.acin
+      # No `switch:` here on purpose. A breaker says something about the load it
+      # feeds, not about the source behind it: opening ACIN does not remove the
+      # city grid, whose voltage carries on reading 240 V. The switch lives on
+      # the inverter's input terminal, which is the load in that pair.
+
+    - id: inv
+      kind: inverter
+      icon: "󰥛"        # sine-wave
+      name: "Inverter"
+      terminals:
+        input:
+          meter: sensor.acin_power
+          energy: sensor.acin_energy
+          # The ACIN breaker sits in series with this line, so the switch belongs
+          # to the terminal, not to the device: an edge only opens on a switch of
+          # its own. Declared on the device alone, an open ACIN left this
+          # edge reading 0 W as `idle` — true but useless, since idle and open
+          # look the same at zero and only the switch tells them apart.
+          switch: switch.acin
+        output:
+          meter: sensor.rcbo_invertor_output_power
+          energy: sensor.rcbo_invertor_output_energy
+          # switch: switch.rcbo_invertor_output
+          #   ^ disabled in Home Assistant. Enabling it turns "the whole bottom
+          #     half went dark" into "the output breaker is open".
+        battery:
+          power: sensor.bms24v_power    # signed: + charge, − discharge
+          unavailable: no_data          # BLE bridge, not a line-powered meter
+        self:
+          power: auto                   # the inverter's standing draw
+          name: "Self"
+          baseline: learn
+        pv:
+          enabled: false                # no panels yet; the node is not drawn
+          # power: auto                 ← if they arrive without a meter
+          # meter: sensor.pv_power      ← if they arrive with one (preferred)
+
+    - id: bat
+      kind: battery
+      name: "Battery"
+      soc: sensor.bms24v_state_of_charge
+      voltage: sensor.bms24v_voltage
+      capacity: sensor.bms24v_capacity_remaining
+
+      # The battery screen. Entities only — the layout lives in the
+      # component. Cells are a prefix and a count because
+      # the ids follow a pattern and this pack could as easily be 16 or 32.
+      details:
+        charge_status:     sensor.bms24v_charge_status
+        errors:            sensor.bms24v_errors
+        current:           sensor.bms24v_current
+        power_sensor:      sensor.bms24v_power
+        capacity_total:    sensor.bms24v_bms24v_total_battery_capacity_setting
+        cycles:            sensor.bms24v_bms24v_charging_cycles
+        cell_delta:        sensor.bms24v_delta          # volts in, millivolts on screen
+        balancing:         sensor.bms24v_balancing      # numeric; zero reads as OFF
+        energy_charged:    sensor.bms24v_daily_charging_energy
+        energy_discharged: sensor.bms24v_daily_discharging_energy
+        temperatures:
+          - { label: T1,     sensor: sensor.bms24v_temperature_sensor_1 }
+          - { label: T2,     sensor: sensor.bms24v_temperature_sensor_2 }
+          - { label: MOSFET, sensor: sensor.bms24v_mos_temperatur }
+        cells: { prefix: sensor.bms24v_cell_, count: 8 }
+
+      # Tapping the battery box opens the battery page. The component fires a
+      # trigger and knows nothing about pages, so a panel laid out differently
+      # binds something else here.
+      on_click:
+        - lvgl.page.show: pg_battery
+
+    - id: bus
+      kind: bus
+      name: "Apartment"
+      source: inv.output                # device-qualified terminal reference
+
+  consumers:
+    # `key` is what appears in logs and on the detail screen under the name;
+    # `control` is a second subscription to the same switch entity, because
+    # reading needs three states and writing needs a Switch.
+    - { name: PC, icon: "󰍹", key: pc, side: right,
+        power: sensor.wallsocket_pc_power,
+        control: switch.wallsocket_pc }
+    - { name: Desk, icon: "󰥟",       side: right, power: sensor.wallsocket_desk_power,
+                                       switch: switch.wallsocket_desk,
+                                       control: switch.wallsocket_desk, key: desk }
+    - { name: Automation, icon: "󰘚", side: left,  power: sensor.wallsocket_automation_power }
+    - { name: BOLIVAR, icon: "󰭬",    side: left,  power: sensor.bolivar_charge_power,
+                                       switch: switch.bolivar_charge,
+                                       control: switch.bolivar_charge, key: bolivar }
+    - { name: Boiler, icon: "󰾒",     side: left,  power: sensor.relay_boiler_power,
+                                       switch: switch.relay_boiler,
+                                       control: switch.relay_boiler, key: boiler }
+    - { name: Other,      side: left,  power: auto, icon: "󰇘" }
+
+  # ------------------------------------------------------------------- tuning
+  average_window: 60s          # what differences are computed over
+  display_window: 10s          # what measured values are *shown* over. Short on
+                               # purpose: the long window is there so two meters
+                               # sampled at different instants can be subtracted,
+                               # and a measured value is never subtracted.
+  idle_below: 3W               # flow below this = edge idle
+  battery_deadband: 15W        # |P_battery| below this = at rest. Gates both the headline
+                               # energy figure and the baseline fit's sampling
+  figure: both                 # auto | losses | efficiency | both. Losses and efficiency
+                               # are complementary views of the same two sums over the
+                               # inverter node; `auto` shows watts while the battery
+                               # rests and a percentage while it charges or discharges
+  inference:
+    grid_loss_from_battery:
+      enabled: true
+      mode: suspect            # dash instead of a number; topology unchanged
+      min_discharge: 50W
+      hold: 20s
+      require_stale_grid: false
+
+  # ------------------------- wiring: constant for this panel, edit nothing ---
+  parent_id: flow_root
+  battery_parent_id: battery_root
+  load_parent_id: load_root
+  time_id: ha_time
+  status: sys_status           # distinguishes "HA is gone" from "the mains are gone"
+  on_back:
+    - lvgl.page.show: pg_flow
+  # Every node opens the detail screen, except the battery, which binds its own
+  # action above because it opens a different one.
+  on_node_click:
+    - lvgl.page.show: pg_load
+
+  # The only appearance left in YAML. Every colour is a constant in the
+  # renderer; fonts cannot follow because ESPHome builds them in section 3 at
+  # codegen time. Two families, one rule: numerals monospaced, words Montserrat.
+  fonts: { s10: f_s10, s14: f_s14, s16: f_s16, s18: f_s18, s20: f_s20,
+           s22: f_s22, m12: f_m12, m14: f_m14, m16: f_m16, m22: f_m22,
+           m28: f_m28, m72: f_m72, icon: f_icons }
+
+
+# #############################################################################
+# ##  2. SITE — network and services                                         ##
+# #############################################################################
+
+# Radio wiring (esp32_hosted) is in section 3; only credentials and services
+# live here, and the credentials themselves stay in secrets.yaml.
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+  ap:
+    ssid: "BMS Panel"
+    password: !secret fallback_password
+
+captive_portal:
+
+api:
+  reboot_timeout: 0s     # a wall panel must not reboot itself while HA is down
+
+# NOTE: api's on_client_connected/on_client_disconnected fire per connection,
+# and there are normally two clients (Home Assistant and the ESPHome log
+# viewer). Tracking them in a bool goes false as soon as either one drops.
+# The `status` binary sensor below polls api_server->is_connected() instead.
+
+ota:
+  - platform: esphome
+
+logger:
+  level: INFO
+
+
+# #############################################################################
+# ##  3. MODULE CONSTANTS — board wiring, fonts, LVGL, scaffolding           ##
+# #############################################################################
+
+esphome:
+  name: ${name}
+  friendly_name: ${friendly_name}
+  min_version: 2025.12.0     # that release added the JC4880P443 panel model
+  on_boot:
+    - priority: -100
+      then:
+        - light.turn_on:
+            id: backlight
+            brightness: 80%
+
+# Reference a tag, not a branch: a branch means the firmware you build next
+# month may not be the firmware you built today.
+external_components:
+  - source: github://stalexteam/esphome_power_flow@v1.0.0
+    components: [power_flow]
+
+esp32:
+  board: esp32-p4-evboard
+  flash_size: 16MB
+  cpu_frequency: 400MHz
+  framework:
+    type: esp-idf
+
+psram:
+  mode: hex
+  speed: 200MHz          # P4 accepts 20/100/200MHz; the default is 20 — must be set explicitly
+
+# --- Wi-Fi radio is the on-board ESP32-C6 over SDIO (esp-hosted) -------------
+esp32_hosted:
+  variant: ESP32C6
+  active_high: true
+  reset_pin: 54
+  clk_pin: 18
+  cmd_pin: 19
+  d0_pin: 14
+  d1_pin: 15
+  d2_pin: 16
+  d3_pin: 17
+  bus_width: 4
+  slot: 1
+  sdio_frequency: 40MHz
+  use_psram: true
+
+i2c:
+  sda: 7
+  scl: 8
+  frequency: 400kHz
+
+# VDD_MIPI_DPHY is fed from the P4's internal LDO_VO3 at 2.5V.
+# Same channel/voltage the vendor's demo firmware uses.
+esp_ldo:
+  - channel: 3
+    voltage: 2.5V
+
+display:
+  - platform: mipi_dsi
+    id: main_lcd
+    model: JC4880P443        # 480x800; reset GPIO5, DSI timings and init sequence live in the model
+    auto_clear_enabled: false
+
+touchscreen:
+  - platform: gt911
+    id: main_tp
+    reset_pin: 22
+    interrupt_pin: 21
+    # While LVGL is paused it ignores input, so the tap that wakes the panel
+    # only wakes it — it never lands on whatever button was underneath.
+    on_touch:
+      - lvgl.resume:
+      - light.turn_on:
+          id: backlight
+          brightness: 80%
+
+output:
+  - platform: ledc
+    id: backlight_out
+    pin: 23
+    frequency: 20000Hz
+
+light:
+  - platform: monochromatic
+    id: backlight
+    output: backlight_out
+    name: "Backlight"
+    restore_mode: ALWAYS_ON
+    default_transition_length: 400ms
+
+binary_sensor:
+  # true only while the network is up AND an API client is actually attached;
+  # polled every second, so it never gets stuck the way a trigger-set flag does
+  - platform: status
+    id: sys_status
+    name: "Status"
+
+  - platform: gpio
+    name: "Boot button"
+    pin:
+      number: 35
+      inverted: true
+      mode:
+        input: true
+        pullup: true
+
+sensor:
+  - platform: wifi_signal
+    id: wifi_rssi
+    name: "Wi-Fi signal"
+    entity_category: diagnostic
+    update_interval: 30s
+
+# Wall-clock for the detail screens' reason lines ("off since 09:12"). It drives
+# no widget: durations come from millis(), the hour comes from here.
+time:
+  - platform: homeassistant
+    id: ha_time
+
+# =============================================================================
+#  Fonts — the renderer's required set. ESPHome builds fonts at codegen time,
+#  so they are the one piece of appearance that cannot move into the component.
+# =============================================================================
+font:
+  - file: "gfonts://Roboto@700"
+    id: f_xl
+    size: 106
+    bpp: 4
+    glyphs: "0123456789%"
+  - file: "gfonts://Roboto@500"
+    id: f_lg
+    size: 58
+    bpp: 4
+    glyphs: "0123456789.-"
+  - { file: "gfonts://Roboto@500", id: f_val, size: 27, bpp: 4,
+      glyphsets: &latin_cyr [GF_Latin_Core, GF_Cyrillic_Core] }
+  - { file: "gfonts://Roboto@400", id: f_med, size: 20, bpp: 4, glyphsets: *latin_cyr }
+  - { file: "gfonts://Roboto@400", id: f_sm,  size: 15, bpp: 4, glyphsets: *latin_cyr }
+
+  # Two families, one rule — every numeral is monospaced, every word is
+  # Montserrat. The slots below are named by family and size rather than by
+  # role, so the rule stays checkable by looking at the glyphs.
+  #
+  # Cyrillic stays on the Montserrat faces: node names come from the config and
+  # remain the owner's to write in whatever language he likes.
+  - { file: "gfonts://Montserrat@600", id: f_s10, size: 10, bpp: 4, glyphsets: *latin_cyr }
+  - { file: "gfonts://Montserrat@500", id: f_s14, size: 14, bpp: 4, glyphsets: *latin_cyr }
+  - { file: "gfonts://Montserrat@600", id: f_s16, size: 16, bpp: 4, glyphsets: *latin_cyr }
+  - { file: "gfonts://Montserrat@600", id: f_s18, size: 18, bpp: 4, glyphsets: *latin_cyr }
+  - { file: "gfonts://Montserrat@700", id: f_s20, size: 20, bpp: 4, glyphsets: *latin_cyr }
+  - { file: "gfonts://Montserrat@700", id: f_s22, size: 22, bpp: 4, glyphsets: *latin_cyr }
+
+  # JetBrains Mono, digits and the handful of symbols that ride along with a
+  # number. The glyph set is tiny, which is what makes six sizes affordable.
+  - { file: "gfonts://JetBrains+Mono@500", id: f_m12, size: 12, bpp: 4, glyphs: &mono_glyphs
+      "0123456789.,+-%°−— VAWhkmC" }
+  # The one mono face that carries text rather than numbers: entity ids and the
+  # node key on the detail screen. The others stay digits-only.
+  - { file: "gfonts://JetBrains+Mono@600", id: f_m14, size: 14, bpp: 4,
+      glyphsets: [GF_Latin_Core] }
+  - { file: "gfonts://JetBrains+Mono@600", id: f_m16, size: 16, bpp: 4, glyphs: *mono_glyphs }
+  - { file: "gfonts://JetBrains+Mono@700", id: f_m22, size: 22, bpp: 4, glyphs: *mono_glyphs }
+  - { file: "gfonts://JetBrains+Mono@700", id: f_m28, size: 28, bpp: 4, glyphs: *mono_glyphs }
+  - { file: "gfonts://JetBrains+Mono@700", id: f_m72, size: 72, bpp: 4, glyphs: "0123456789" }
+
+  # Material Design Icons, pinned so the codepoints below stay valid
+  - file:
+      type: web
+      url: "https://github.com/Templarian/MaterialDesign-Webfont/raw/v7.4.47/fonts/materialdesignicons-webfont.ttf"
+    id: f_icons
+    size: 26
+    bpp: 4
+    glyphs: [
+      "\U000F091F",   # wifi-strength-1
+      "\U000F0922",   # wifi-strength-2
+      "\U000F0925",   # wifi-strength-3
+      "\U000F0928",   # wifi-strength-4
+      "\U000F092F",   # wifi-strength-outline  (connected, RSSI unknown yet)
+      "\U000F092E",   # wifi-strength-off-outline
+      "\U000F0164",   # cloud-off-outline      (Wi-Fi up, no Home Assistant)
+
+      # power_flow diagram. Codepoints read out of the webfont repo's
+      # scss/_variables.scss at the tag above, not from memory.
+      "󰉁",   # flash                  city grid
+      "󰥛",   # sine-wave              inverter
+      "󰖨",   # white-balance-sunny    PV
+      "󱐥",   # power-plug-outline     on-grid load
+      "󰇘",   # dots-horizontal        the unmetered remainder
+      "󰍹",   # monitor                PC
+      "󰥟",   # desk-lamp              Desk
+      "󰘚",   # chip                   Automation
+      "󰭬",   # car-electric           BOLIVAR
+      "󰾒",   # water-boiler           Boiler
+      "󱎘",   # close-thick            the lost-contact marker
+      "󰅁",   # chevron-left           the battery screen's Back
+      "󰄬",   # check                  no errors
+      "󰀪",   # alert-outline          errors present
+      "󰧞",   # circle-medium          the state marker
+    ]
+
+# =============================================================================
+#  LVGL — three pages, each one empty full-screen `obj`. The power_flow
+#  component builds every screen inside its root with the raw LVGL C API, and
+#  those three objects are the only coupling between the component and LVGL.
+# =============================================================================
+
+# Ignored by ESPHome (leading dot): the shared shape of the three page roots.
+.anchors:
+  - &full_screen_root
+    x: 0
+    y: 0
+    width: 480
+    height: 800
+    bg_opa: TRANSP
+    border_width: 0
+    pad_all: 0
+
+lvgl:
+  displays: [main_lcd]
+  touchscreens: [main_tp]
+  buffer_size: 25%
+  bg_color: 0x0B0F14
+  text_color: 0xE8EDF2
+  text_font: f_med
+
+  # Screen goes fully dark, not dim: backlight off and LVGL stopped, so nothing
+  # is rendered while nobody is there. The next touch resumes it.
+  on_idle:
+    timeout: 5min
+    then:
+      - light.turn_off: backlight
+      - lvgl.page.show: pg_flow
+      - lvgl.pause:
+          show_snow: false
+
+  pages:
+    # The default screen: this is what the panel wakes to (the flow diagram).
+    - id: pg_flow
+      bg_color: 0x0B0F14
+      widgets:
+        - obj:
+            id: flow_root
+            <<: *full_screen_root
+
+    # One card's details, whichever card was tapped.
+    - id: pg_load
+      bg_color: 0x0E1720
+      widgets:
+        - obj:
+            id: load_root
+            <<: *full_screen_root
+
+    # The battery readout, with its own Back button and scrolling.
+    - id: pg_battery
+      bg_color: 0x0E1720
+      widgets:
+        - obj:
+            id: battery_root
+            <<: *full_screen_root

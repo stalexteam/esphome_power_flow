@@ -1,14 +1,28 @@
 # esphome_power_flow
 
-An ESPHome external component that draws an animated power-flow diagram of a
-home electrical installation, plus detail screens for the battery and for any
-node on it. Built for a Guition JC4880P443 (ESP32-P4, 480 × 800) but tied to
-nothing about that panel except the screen size.
+An ESPHome external component that turns a touch panel into a live diagram of
+a home electrical installation: an animated power-flow screen, a battery
+screen, and a detail screen for whichever node was tapped. Everything is read
+from Home Assistant; the panel measures nothing itself.
 
-The YAML stays declarative — entities, names, icons, fonts — and all geometry,
-arithmetic and animation live in C++.
+<p>
+  <img src="docs/img/01-grid-ongrid-pv.png" width="30%" alt="Power flow screen"/>
+  <img src="docs/img/04-battery-screen.png" width="30%" alt="Battery screen"/>
+  <img src="docs/img/05-load-active.png" width="30%" alt="Node detail screen"/>
+</p>
 
-## Using it
+- The YAML stays declarative — entities, names, icons, fonts. Geometry,
+  colours, arithmetic and animation live in C++.
+- Per node, the balance solves for exactly one unmetered edge (`power: auto`);
+  a second unknown is rejected at compile time.
+- A value whose validity condition is unmet shows **a dash, never an
+  estimate** — no quietly wrong numbers on a wall.
+- Nodes with a `control:` switch get a working toggle on their detail screen.
+
+Built for a Guition JC4880P443 (ESP32-P4, 480 × 800) but tied to nothing about
+that panel except the screen size. Developed and tested against ESPHome 2026.8.
+
+## Install
 
 ```yaml
 external_components:
@@ -16,30 +30,26 @@ external_components:
     components: [power_flow]
 ```
 
-Reference a tag rather than a branch. A branch means the firmware you build next
-month may not be the firmware you built today, and on a wall panel that surfaces
-as something quietly not working.
+Reference a tag rather than a branch: a branch means the firmware you build
+next month may not be the firmware you built today, and on a wall panel that
+surfaces as something quietly not working.
 
-## Prerequisites
+Then start from the [complete example](examples/JC4880P443.yaml) — it is the
+deployed config of a real installation, with the LVGL pages, the thirteen
+fonts and the icon glyphs already wired.
 
-**Home Assistant must be allowed to accept actions from the device**, if any node
-declares a `control:` switch. *Settings → Devices → your panel → Configure →
-«Allow the device to perform Home Assistant actions».*
+## One permission that fails silently
 
-It is **off by default**, and its failure mode is silent: the panel sends the
-service call, Home Assistant discards it, no error appears anywhere, and the
-relay does not move. Everything else works without it.
+If any node declares `control:`, Home Assistant must be allowed to accept
+actions from the device: *Settings → Devices → your panel → Configure →
+"Allow the device to perform Home Assistant actions"*. It is **off by
+default**, and without it the panel sends the call, HA discards it, nothing
+logs an error, and the relay does not move. Everything else works without it.
 
-## What is where
+## Documentation
 
-| File | |
+| | |
 |---|---|
-| `components/power_flow/pf_math.*` | the arithmetic, free of ESPHome and LVGL so it can be tested off-target |
-| `components/power_flow/power_flow.*` | the component: subscriptions, balance, edge states |
-| `components/power_flow/power_flow_render.*` | the flow diagram |
-| `components/power_flow/battery_render.*` | the battery screen |
-| `components/power_flow/load_render.*` | the node detail screen |
-| `components/power_flow/pf_palette.h` | the palette, shared by all three screens |
-
-The specification and the UI documents that govern every coordinate live outside
-this repository, with the installation they were written for.
+| [Configuration reference](docs/configuration.md) | every option: devices, terminals, consumers, tuning, inference, fonts |
+| [Example config](examples/JC4880P443.yaml) | a full panel, sectioned by how often each part changes |
+| [License](LICENSE) | GPL-3.0 |

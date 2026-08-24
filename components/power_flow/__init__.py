@@ -678,7 +678,10 @@ CONFIG_SCHEMA = cv.All(
             cv.Optional(CONF_FIGURE, default="auto"): cv.enum(
                 FIGURE_MODES, lower=True
             ),
-            cv.Optional(CONF_STYLE, default={}): FONTS_SCHEMA,
+            # Required as a block: a missing face is a blank label, and a blank
+            # label on a wall panel is indistinguishable from a value that
+            # failed to arrive.
+            cv.Required(CONF_STYLE): FONTS_SCHEMA,
             cv.Optional(CONF_INFERENCE, default={}): INFERENCE_SCHEMA,
             cv.Required(CONF_DEVICES): cv.All(
                 cv.ensure_list(DEVICE_SCHEMA), cv.Length(min=1)
