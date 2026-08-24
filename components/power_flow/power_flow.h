@@ -399,6 +399,7 @@ class PowerFlow : public Component {
   const Diagnostics &diagnostics() const { return this->diag_; }
   float idle_below() const { return this->idle_below_; }
   uint32_t display_window() const { return this->display_window_; }
+  uint32_t average_window() const { return this->average_window_; }
   /// When this terminal's newest sample arrived, in millis(). 0 if never.
   uint32_t last_update(const Terminal &t) const;
   const PowerFlowStyle &style() const { return this->style_; }

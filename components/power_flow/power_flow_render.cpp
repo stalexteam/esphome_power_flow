@@ -844,6 +844,10 @@ void FlowRenderer::build_(lv_obj_t *parent) {
     Node n;
     n.slot = Slot::INVERTER;
     n.device = d_inv;
+    // The detail card's power reading. The output is what the inverter
+    // delivers, which is the number a tap on it should answer with; without a
+    // terminal the card would show whatever the previous subject left behind.
+    n.terminal = t_out != INVALID_INDEX ? t_out : t_in;
     this->build_inverter_(n);
     this->n_inverter_ = this->add_node_(std::move(n));
   }

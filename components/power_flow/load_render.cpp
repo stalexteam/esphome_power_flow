@@ -636,8 +636,15 @@ void LoadScreen::on_toggle_() {
 
 void LoadScreen::update_power_() {
   const Terminal *t = this->term_();
-  if (t == nullptr)
+  if (t == nullptr) {
+    // A subject with no terminal has no reading of its own. The card is a
+    // shared widget tree, so leaving it alone would show the previous
+    // subject's number — a dash is the truthful display.
+    this->set_value_(this->pw_value_, DASH, nullptr, pal::text_off);
+    set_text(this->pw_age_, this->txt_age_, "");
+    set_text(this->pw_second_, this->txt_second_, "");
     return;
+  }
   const float now_v = t->display;
   const float avg = t->value;
   const uint32_t last = this->pf_->last_update(*t);
@@ -665,7 +672,9 @@ void LoadScreen::update_power_() {
   else if (t->state == EdgeState::OPEN)
     second = "reporting, not drawing";
   else if (is_valid(avg))
-    second = "60 s avg " + fmt_power(avg) + " " + power_unit(avg);
+    // The label states the configured window rather than assuming 60 s.
+    second = std::to_string(this->pf_->average_window() / 1000u) + " s avg " + fmt_power(avg) +
+             " " + power_unit(avg);
   set_text(this->pw_second_, this->txt_second_, second);
 }
 
