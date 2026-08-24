@@ -1,7 +1,8 @@
 # esphome_power_flow
 
-An ESPHome external component that turns a touch panel into a live diagram of
-a home electrical installation: an animated power-flow screen, a battery
+An ESPHome external component that turns a touch panel (initially: Guition
+JC4880P443, ESP32-P4, 480 × 800) into a live diagram of a home electrical
+installation: an animated power-flow screen, a battery
 screen, and a detail screen for whichever node was tapped. Everything is read
 from Home Assistant; the panel measures nothing itself.
 
@@ -18,8 +19,8 @@ from Home Assistant; the panel measures nothing itself.
   estimate** — no quietly wrong numbers on a wall.
 - Nodes with a `control:` switch get a working toggle on their detail screen.
 
-Built for a Guition JC4880P443 (ESP32-P4, 480 × 800) but tied to nothing about
-that panel except the screen size. Developed and tested against ESPHome 2026.8.
+Tied to nothing about that panel except the screen size. Developed and tested
+against ESPHome 2026.8.
 
 ## Install
 
