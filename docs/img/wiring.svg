@@ -50,8 +50,8 @@
   <circle cx="250" cy="170" r="14" fill="#16222E" stroke="#8FC0FF" stroke-width="1.8"/>
   <text x="250" y="174.5" fill="#8FC0FF" font-size="11" font-weight="700" text-anchor="middle">W</text>
   <text x="250" y="212" fill="#A8C0D2" font-size="12" font-weight="600" text-anchor="middle">metering MCB</text>
-  <text x="250" y="228" fill="#6F8699" font-size="11" text-anchor="middle">power · energy · voltage</text>
-  <text x="250" y="243" fill="#6F8699" font-size="11" text-anchor="middle">temperature · switch</text>
+  <text x="250" y="228" fill="#6F8699" font-size="11" text-anchor="middle">power · energy · voltage · switch</text>
+  <text x="250" y="243" fill="#6F8699" font-size="11" text-anchor="middle">temperature (optional)</text>
 
   <!-- Tongou on the output line -->
   <circle cx="600" cy="170" r="14" fill="#16222E" stroke="#7ED4F0" stroke-width="1.8"/>

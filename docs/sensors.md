@@ -43,7 +43,7 @@ component only sees entities.
 
 | Where | Hardware | Provides |
 |---|---|---|
-| inverter input | metering MCB (DIN breaker-meter) | power, energy, voltage, temperature, switch |
+| inverter input | metering MCB (DIN breaker-meter) | power, energy, voltage, switch, temperature (if the meter has it) |
 | inverter output | metering RCBO | power, energy |
 | battery | the BMS, exposed to HA over a BLE bridge | signed power, SOC, voltage, capacity, cells, temperatures |
 | consumers | smart plugs and metering relays | power, relay state |
