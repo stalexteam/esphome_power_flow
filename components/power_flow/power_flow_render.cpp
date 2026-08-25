@@ -1098,8 +1098,30 @@ void FlowRenderer::build_(lv_obj_t *parent) {
     e.kind = Kind::BUS;
     e.line_col = pal::load_line;
     e.val_col = pal::load;
+    // Split at every branch point, the same places the dot runs are split and
+    // for the same reason: a length of trunk answers to the rows below it and
+    // to nothing else. Drawn as one rectangle each so each can be painted its
+    // own state — the tail below the last live row is grey when the only things
+    // hanging off it are switched off, which is what the Boiler's own branch
+    // right beside it already says.
+    //
+    // Length 0 straddles the scroll boundary and is therefore two rectangles,
+    // one in each host; the rest are wholly inside the container.
+    // The trunk ends one pixel past the last branch, which is where §4.4 put it
+    // and which the split must preserve: the lengths together are exactly the
+    // rectangle they replace.
     e.seg_rect = {{BUS_X, CORE_B, 2, (int16_t) (SCROLL_Y - CORE_B)},
-                  {BUS_X, 0, 2, (int16_t) (102 + ROW_PITCH * n_last)}};
+                  {BUS_X, 0, 2, (int16_t) (n_rows == 1 ? 102 : 101)}};
+    e.seg_run = {0, 0};
+    for (int r = 1; r < n_rows; r++) {
+      e.seg_rect.push_back({BUS_X, (int16_t) (101 + ROW_PITCH * (r - 1)), 2,
+                            (int16_t) (r == n_rows - 1 ? ROW_PITCH + 1 : ROW_PITCH)});
+      e.seg_run.push_back((uint8_t) r);
+    }
+    // The ✕ belongs in the middle of the trunk, not in the middle of whichever
+    // length happens to be longest. Length 1 puts it within a few pixels of
+    // where the undivided bus used to place it.
+    e.cross_seg = (int8_t) std::min(2, (int) e.seg_rect.size() - 1);
     e.bcx = 240;
     e.bcy = 429;
     e.bw = has_pv ? 110 : 100;
@@ -1174,27 +1196,31 @@ void FlowRenderer::build_(lv_obj_t *parent) {
   for (Edge &e : this->edges_) {
     lv_obj_t *host = (e.kind == Kind::CONSUMER) ? this->scroll_ : this->root_;
     for (size_t i = 0; i < e.seg_rect.size(); i++) {
-      // The bus is the one edge with a rectangle on each side of the boundary;
-      // its lower length must be a child of the container so it scrolls with
-      // the rows.
-      lv_obj_t *p = (e.kind == Kind::BUS && i == 1) ? this->scroll_ : host;
+      // The bus is the one edge with rectangles on both sides of the boundary;
+      // everything below the first must be a child of the container so it
+      // scrolls with the rows.
+      lv_obj_t *p = (e.kind == Kind::BUS && i >= 1) ? this->scroll_ : host;
       e.segs.push_back(this->rect_(p, e.seg_rect[i], e.line_col));
     }
     if (e.head_fwd.w != 0) {
       this->build_head_(e, host);
       this->place_head_(e, false);
     }
-    size_t longest = 0;
-    int best = -1;
-    for (size_t i = 0; i < e.seg_rect.size(); i++) {
-      const int len = std::max(e.seg_rect[i].w, e.seg_rect[i].h);
-      if (len > best) {
-        best = len;
-        longest = i;
+    size_t anchor = 0;
+    if (e.cross_seg >= 0 && e.cross_seg < (int) e.seg_rect.size()) {
+      anchor = (size_t) e.cross_seg;
+    } else {
+      int best = -1;
+      for (size_t i = 0; i < e.seg_rect.size(); i++) {
+        const int len = std::max(e.seg_rect[i].w, e.seg_rect[i].h);
+        if (len > best) {
+          best = len;
+          anchor = i;
+        }
       }
     }
-    const Rect &lr = e.seg_rect[longest];
-    lv_obj_t *ch = (e.kind == Kind::BUS && longest == 1) ? this->scroll_ : host;
+    const Rect &lr = e.seg_rect[anchor];
+    lv_obj_t *ch = (e.kind == Kind::BUS && anchor >= 1) ? this->scroll_ : host;
     this->build_cross_(e, ch, lr.x + lr.w / 2, lr.y + lr.h / 2);
   }
 
@@ -1729,8 +1755,11 @@ void FlowRenderer::update_edge_(Edge &e) {
   if (col != e.col_line) {
     e.col_line = col;
     const lv_color_t c = lv_color_hex(col);
-    for (lv_obj_t *o : e.segs)
-      lv_obj_set_style_bg_color(o, c, LV_PART_MAIN);
+    // A rectangle tagged with a run answers to that run's state instead, which
+    // update_bus_() paints. Only the trunk has any.
+    for (size_t i = 0; i < e.segs.size(); i++)
+      if (e.seg_run.empty() || e.seg_run[i] == INVALID_INDEX)
+        lv_obj_set_style_bg_color(e.segs[i], c, LV_PART_MAIN);
     for (lv_obj_t *o : e.head)
       if (o != nullptr)
         lv_obj_set_style_bg_color(o, c, LV_PART_MAIN);
@@ -1815,7 +1844,7 @@ void FlowRenderer::update_edge_(Edge &e) {
     r.rev = discharging;
   }
   if (e.kind == Kind::BUS)
-    this->update_bus_(e);
+    this->update_bus_(e, col);
   else
     for (DotRun &r : e.runs)
       this->size_run_(r, v, run);
@@ -1840,12 +1869,25 @@ void FlowRenderer::update_edge_(Edge &e) {
 /// than the top run carries. It should be: `Other` — the unmetered remainder —
 /// is drawn leaving at the core, above the first branch, so by the diagram's own
 /// account the trunk never carries it.
-void FlowRenderer::update_bus_(Edge &e) {
+/// Colour, amended 2026-08-25 alongside the split. The trunk used to be painted
+/// by one state — its own terminal's — so it stayed live all the way down while
+/// its dots correctly stopped at the last drawing row. That is what an edge
+/// leading only to a switched-off Boiler looked like: bright, beside its own
+/// branch drawn grey.
+///
+/// The discriminator is *off*, not *zero*. A length whose rows are on but idle
+/// keeps its role colour, because the wire has mains on it — the rule §6 was
+/// amended to state. A length whose rows are all deliberately open goes grey,
+/// the same grey as the branches it feeds, because there is nothing beyond it
+/// that could ever draw. A dead meter below wins over an open switch: not
+/// knowing is the more serious statement.
+void FlowRenderer::update_bus_(Edge &e, uint32_t edge_col) {
   const Terminal *t = this->term_(e.terminal);
   const bool on = this->ha_contact_ && t != nullptr && t->state == EdgeState::ACTIVE;
 
-  // Row totals first, then a running sum from the bottom up.
+  // Per row first, then a running sum from the bottom up.
   float below[MAX_ROWS] = {};
+  bool live[MAX_ROWS] = {}, open[MAX_ROWS] = {}, dead[MAX_ROWS] = {};
   const size_t rows = std::min(e.runs.size(), (size_t) MAX_ROWS);
   for (const std::vector<uint8_t> *col : {&this->col_left_, &this->col_right_})
     for (uint8_t idx : *col) {
@@ -1853,18 +1895,53 @@ void FlowRenderer::update_bus_(Edge &e) {
       if (n.row < 0 || (size_t) n.row >= rows)
         continue;
       const Terminal *ct = this->term_(n.terminal);
-      // ACTIVE only: an open switch draws nothing and a dead meter is not a
-      // measurement. Excluding an unknown understates the density, which is the
-      // side of §6.9 to be wrong on.
-      if (ct != nullptr && ct->state == EdgeState::ACTIVE && is_valid(ct->display))
-        below[n.row] += std::fabs(ct->display);
+      if (ct == nullptr)
+        continue;
+      switch (ct->state) {
+        case EdgeState::ACTIVE:
+          // ACTIVE only for the sum: an open switch draws nothing and a dead
+          // meter is not a measurement. Excluding an unknown understates the
+          // density, which is the side of §6.9 to be wrong on.
+          if (is_valid(ct->display))
+            below[n.row] += std::fabs(ct->display);
+          live[n.row] = true;
+          break;
+        case EdgeState::IDLE: live[n.row] = true; break;  // on, drawing nothing
+        case EdgeState::OPEN: open[n.row] = true; break;
+        default: dead[n.row] = true; break;
+      }
     }
-  for (size_t i = rows; i-- > 1;)
+  for (size_t i = rows; i-- > 1;) {
     below[i - 1] += below[i];
+    live[i - 1] = live[i - 1] || live[i];
+    open[i - 1] = open[i - 1] || open[i];
+    dead[i - 1] = dead[i - 1] || dead[i];
+  }
 
   const float floor_w = this->pf_->idle_below();
-  for (size_t i = 0; i < rows; i++)
-    this->size_run_(e.runs[i], below[i], on && below[i] > floor_w);
+  for (size_t i = 0; i < rows; i++) {
+    DotRun &r = e.runs[i];
+    this->size_run_(r, below[i], on && below[i] > floor_w);
+
+    // The trunk's own state wins: a bus with no reading at all is grey whatever
+    // hangs off it.
+    if (!on || live[i])
+      r.col = edge_col;
+    else if (dead[i])
+      r.col = pal::nodata_line;
+    else if (open[i])
+      r.col = pal::off_line;
+    else
+      r.col = edge_col;  // no rows below at all — cannot happen, runs are per row
+
+    if (r.col == r.col_written)
+      continue;
+    r.col_written = r.col;
+    const lv_color_t c = lv_color_hex(r.col);
+    for (size_t k = 0; k < e.segs.size(); k++)
+      if (k < e.seg_run.size() && e.seg_run[k] == (uint8_t) i)
+        lv_obj_set_style_bg_color(e.segs[k], c, LV_PART_MAIN);
+  }
 }
 
 /// §4.3 — entries that are off or no-data sink to the last rows of their column,

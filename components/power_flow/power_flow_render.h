@@ -177,6 +177,12 @@ class FlowRenderer {
     /// frames in four.
     Pt last[MAX_DOTS]{};
     uint8_t vis_mask{0};
+
+    /// What the rectangles tagged with this run should be painted, and what they
+    /// were painted last. Only the bus uses it: it is the one edge whose lengths
+    /// are not all in the same state, because each of them answers to a
+    /// different set of consumers.
+    uint32_t col{0}, col_written{0xFFFFFFFFu};
   };
 
   /// One rendered edge: its rectangles, its arrowhead, its badge, its ✕ and
@@ -188,6 +194,14 @@ class FlowRenderer {
 
     std::vector<lv_obj_t *> segs;
     std::vector<Rect> seg_rect;
+    /// Which dot run each rectangle belongs to, and so which state paints it.
+    /// Empty, or `INVALID_INDEX` per entry, means the segment follows the edge's
+    /// own state — which is every edge but the bus.
+    std::vector<uint8_t> seg_run;
+    /// Which segment the ✕ is centred on. -1 picks the longest, which is right
+    /// everywhere except the bus, where the trunk is several rectangles and the
+    /// longest of them is not the middle of the wire.
+    int8_t cross_seg{-1};
 
     /// The run whose length changes when the arrowhead disappears: a consumer's
     /// stub starts 8 px lower when there is a head to make room for.
@@ -278,7 +292,7 @@ class FlowRenderer {
   /// not one current: every row taps some of it off, and a run whose remainder
   /// has fallen to nothing must stop animating or the diagram claims a load is
   /// drawing when it is not.
-  void update_bus_(Edge &e);
+  void update_bus_(Edge &e, uint32_t edge_col);
   void update_overlays_();
   void resort_consumers_();
   void set_badge_(Edge &e, const std::string &txt, uint32_t line, uint32_t text, int width,
