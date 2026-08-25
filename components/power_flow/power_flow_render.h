@@ -44,6 +44,7 @@
 
 #ifdef USE_LVGL
 
+#include <initializer_list>
 #include <string>
 #include <vector>
 
@@ -128,10 +129,55 @@ class FlowRenderer {
     bool dead{false}, offline_shown{false}, unreliable_shown{false};
   };
 
-  /// Which connector this is. The role decides the line colour, the badge text
-  /// colour and whether the edge animates (§7 gives dots to the row-1 edges and
-  /// to the bus, and to nothing else).
+  /// Which connector this is. The role decides the line colour and the badge
+  /// text colour. It used to decide whether the edge animated as well; §7 as
+  /// amended 2026-08-25 gives dots to every edge, so it no longer does.
   enum class Kind : uint8_t { GRID, TAP, PV, OTHER, BATTERY, BUS, CONSUMER };
+
+  /// A point on a flow path: the *centreline* of the run it lies on, absolute
+  /// in `root_` coordinates. A dot is placed at the point minus half its size,
+  /// so a 6 px disc sits centred on a 2 px wire.
+  struct Pt {
+    int16_t x{0}, y{0};
+  };
+
+  /// The most dots one run may show at once. Every dot is an LVGL object moved
+  /// 25 times a second and every move invalidates two small rectangles, so the
+  /// cap is what bounds the frame cost when the whole flat is drawing.
+  static const uint8_t MAX_DOTS = 4;
+
+  /// One stream of dots along a polyline, source end first.
+  ///
+  /// An edge owns one — except the bus, which owns one per length between two
+  /// branch points, because the current in each of them is different and that
+  /// difference is the entire point of the amendment. Count comes from the
+  /// power: a run holds one dot per `gap` pixels and `gap` shrinks as the run
+  /// carries more, which makes the *linear density* of the dots the reading of
+  /// the current rather than their speed.
+  struct DotRun {
+    std::vector<Pt> pts;
+    std::vector<int16_t> cum;  ///< distance along the path at each point; cum[0] = 0
+    int16_t len{0};            ///< cum.back()
+    uint8_t size{6};
+
+    /// Consumer runs sink with their row (§4.3), so their y is the built y plus
+    /// this. Everything else leaves it at zero.
+    int16_t dy{0};
+    /// The battery is the one run that reverses: discharging, the dots come
+    /// back the other way.
+    bool rev{false};
+
+    lv_obj_t *dots[MAX_DOTS]{};
+    uint8_t n{0};  ///< how many of them are shown, 0 = the run is still
+    float phase{0.0f}, speed{0.0f};  ///< speed in runs per second
+    bool animate{false};
+
+    /// Last written per-dot state, so a frame that does not move a dot by a
+    /// whole pixel costs nothing. At 18 px/s a dot stands still for three
+    /// frames in four.
+    Pt last[MAX_DOTS]{};
+    uint8_t vis_mask{0};
+  };
 
   /// One rendered edge: its rectangles, its arrowhead, its badge, its ✕ and
   /// (for the four that carry them) its dots.
@@ -164,23 +210,25 @@ class FlowRenderer {
     int16_t bcx{0}, bcy{0}, bw{0}, bw_idle{0}, bh{28};
     int8_t row{0};
     const lv_font_t *badge_font{nullptr};
+    /// The pill as drawn, absolute and unscrolled, so a dot that would cross it
+    /// can be hidden instead. `w == 0` when no pill is shown.
+    Rect badge_hit;
 
     /// A 36 px disc in `bg` with an `alert` cross on it, centred on the middle
     /// of the longest run. It hides the line, so it reads as a break in the
     /// wire rather than a mark on top of one (§6).
     lv_obj_t *cross{nullptr};
 
-    lv_obj_t *dots[2]{nullptr, nullptr};
-    uint8_t n_dots{0}, dot_size{6};
-    int16_t dot_x{0}, dot_y0{0}, dot_len{0};
-    int8_t dot_dir{1};
-    float phase{0.0f}, speed{0.0f};  ///< speed in fractions of the run per second
+    /// One for every edge but the bus, which gets one per length between two
+    /// consumer rows.
+    std::vector<DotRun> runs;
 
     // Last written state.
     std::string txt_badge;
     uint32_t col_line{0xFFFFFFFFu}, col_badge{0xFFFFFFFFu}, col_badge_txt{0xFFFFFFFFu};
+    uint32_t col_dot{0xFFFFFFFFu};
     int8_t head_state{-2};  ///< -2 unwritten, -1 none, 0 forward, 1 reverse
-    bool badge_shown{false}, cross_shown{false}, animate{false};
+    bool badge_shown{false}, cross_shown{false};
   };
 
   // --- construction
@@ -203,6 +251,14 @@ class FlowRenderer {
   void register_consumer_movables_(uint8_t node_idx);
 
   void add_edge_(Edge &&e);
+  /// A run over `pts`, source first. Lengths are precomputed here because the
+  /// geometry never changes and a frame must not do arithmetic it can avoid.
+  static DotRun make_run_(std::initializer_list<Pt> pts, uint8_t size);
+  /// The centre of a dot at fraction `p` (0 = source, 1 = sink) of the run.
+  static Pt run_point_(const DotRun &r, float p);
+  /// Turn watts into a dot count and a speed, and show or hide the objects the
+  /// count added or dropped. `on` is the edge's own animate decision.
+  void size_run_(DotRun &r, float watts, bool on);
   void build_head_(Edge &e, lv_obj_t *parent);
   void place_head_(Edge &e, bool rev);
   void build_badge_(Edge &e, lv_obj_t *parent, int radius, const lv_font_t *font);
@@ -218,6 +274,11 @@ class FlowRenderer {
   // --- per-update painting
   void update_node_(Node &n);
   void update_edge_(Edge &e);
+  /// What each length of the bus still carries, from the top down. The trunk is
+  /// not one current: every row taps some of it off, and a run whose remainder
+  /// has fallen to nothing must stop animating or the diagram claims a load is
+  /// drawing when it is not.
+  void update_bus_(Edge &e);
   void update_overlays_();
   void resort_consumers_();
   void set_badge_(Edge &e, const std::string &txt, uint32_t line, uint32_t text, int width,
@@ -248,6 +309,7 @@ class FlowRenderer {
   uint8_t t_in_{INVALID_INDEX}, t_out_{INVALID_INDEX}, t_bat_{INVALID_INDEX};
   uint8_t d_bat_{INVALID_INDEX}, d_grid_{INVALID_INDEX}, d_inv_{INVALID_INDEX};
   uint8_t n_inverter_{INVALID_INDEX}, n_grid_{INVALID_INDEX};
+  uint8_t e_bus_{INVALID_INDEX};  ///< index into edges_, so update() can drain it
 
   std::vector<Node> nodes_;
   std::vector<Edge> edges_;

@@ -89,15 +89,40 @@ static const int16_t INV_EFF_X = 106;   ///< 247, i.e. 26 px past the LOSS colum
 static const int16_t INV_OFF_Y = 74;    ///< 275, where OFFLINE replaces both figures
 static const int16_t INV_UNREL_Y = 116; ///< 317, the spare band under the metrics
 
-/// §7. Dots run at ~25 fps along one straight run. Speed is proportional to the
-/// 60 s time-weighted power, compressed with a square root: linear scaling puts
-/// every domestic load in the bottom tenth of the range, so 50 W and 500 W would
-/// look identical. These reproduce the mockups' own timings to within a tenth of
-/// a second — the grid dot crosses its 66 px in about 1.5 s at half a kilowatt.
+/// §7, amended 2026-08-25. The original gave dots to the row-1 edges and the
+/// bus, one straight sub-run each, at a fixed count. Three things were wrong
+/// with that on the wall:
+///
+///   * an edge is a polyline and only one of its runs moved, so nothing ever
+///     travelled *to* a consumer — the horizontal branches were dead;
+///   * the count was fixed, so the animation said the same thing at 20 W as at
+///     2 kW, and speed alone is a poor reading of a current;
+///   * the bus was one slab of dots from the core to the last row, which drew
+///     current flowing past three sleeping sockets to reach the Boiler.
+///
+/// So: every edge animates, along its whole path, and the bus is split at each
+/// branch point into runs that carry what is left after the rows above have
+/// taken their share. Count is `len / gap` and `gap` closes as the run carries
+/// more, which puts the reading in the *linear density* of the dots — the thing
+/// the eye actually compares between two wires — and leaves speed as a
+/// secondary cue.
+///
+/// Both curves are compressed with a square root for the reason the original
+/// gave: linear scaling puts every domestic load in the bottom tenth of the
+/// range, so 50 W and 500 W would look identical.
 static const uint32_t FRAME_MS = 40;
 static const float DOT_SPEED_MIN = 18.0f;
 static const float DOT_SPEED_MAX = 80.0f;
 static const float DOT_SPEED_REF = 2000.0f;
+/// Pixels between two dots at rest and at the reference power. 130 px puts a
+/// single dot on a consumer branch at a few tens of watts; 34 px fills the bus
+/// at two kilowatts, where MAX_DOTS is what actually bounds it.
+static const float DOT_GAP_MAX = 130.0f;
+static const float DOT_GAP_MIN = 34.0f;
+/// How many consumer rows update_bus_() will drain in one pass, so that it can
+/// keep its running sum on the stack. Sixteen rows is 1824 px of bus, five times
+/// what the panel is tall; a config past it simply leaves the tail undrained.
+static const size_t MAX_ROWS = 16;
 
 /// §10 forbids a status bar, so nothing on this screen announces that things
 /// are fine. The banner, the UNRELIABLE caption and the grid verdict appear only
@@ -700,6 +725,69 @@ void FlowRenderer::build_cross_(Edge &e, lv_obj_t *parent, int cx, int cy) {
 
 void FlowRenderer::add_edge_(Edge &&e) { this->edges_.push_back(std::move(e)); }
 
+/// The polyline, with the cumulative distance at every vertex worked out once.
+/// Every path on this diagram is axis-aligned, so a segment's length is one
+/// subtraction and there is no square root anywhere in the frame path.
+FlowRenderer::DotRun FlowRenderer::make_run_(std::initializer_list<Pt> pts, uint8_t size) {
+  DotRun r;
+  r.size = size;
+  r.pts.assign(pts.begin(), pts.end());
+  r.cum.reserve(r.pts.size());
+  int32_t acc = 0;
+  r.cum.push_back(0);
+  for (size_t i = 1; i < r.pts.size(); i++) {
+    acc += std::abs(r.pts[i].x - r.pts[i - 1].x) + std::abs(r.pts[i].y - r.pts[i - 1].y);
+    r.cum.push_back((int16_t) acc);
+  }
+  r.len = (int16_t) acc;
+  return r;
+}
+
+FlowRenderer::Pt FlowRenderer::run_point_(const DotRun &r, float p) {
+  if (r.pts.size() < 2 || r.len <= 0)
+    return r.pts.empty() ? Pt{} : r.pts[0];
+  const float d = p * (float) r.len;
+  size_t i = 1;
+  while (i + 1 < r.cum.size() && (float) r.cum[i] < d)
+    i++;
+  const float a = (float) r.cum[i - 1], b = (float) r.cum[i];
+  const float u = (b > a) ? (d - a) / (b - a) : 0.0f;
+  const Pt &p0 = r.pts[i - 1];
+  const Pt &p1 = r.pts[i];
+  return {(int16_t) lroundf((float) p0.x + (float) (p1.x - p0.x) * u),
+          (int16_t) lroundf((float) p0.y + (float) (p1.y - p0.y) * u)};
+}
+
+/// One dot per `gap` pixels, `gap` closing with the square root of the power.
+/// A run that carries anything at all keeps at least one dot: below the gap the
+/// count would round to zero and the wire would read as dead, which is what the
+/// IDLE and OPEN states are for and not what a hundred watts means.
+void FlowRenderer::size_run_(DotRun &r, float watts, bool on) {
+  uint8_t want = 0;
+  float speed = 0.0f;
+  if (on && r.len > 0 && is_valid(watts)) {
+    const float k = std::sqrt(std::min(1.0f, std::fabs(watts) / DOT_SPEED_REF));
+    const float gap = DOT_GAP_MAX - (DOT_GAP_MAX - DOT_GAP_MIN) * k;
+    const int n = (int) lroundf((float) r.len / gap);
+    want = (uint8_t) std::min<int>(MAX_DOTS, std::max(1, n));
+    speed = (DOT_SPEED_MIN + (DOT_SPEED_MAX - DOT_SPEED_MIN) * k) / (float) r.len;
+  }
+  r.speed = speed;
+  r.animate = want > 0;
+  if (want == r.n)
+    return;
+  r.n = want;
+  // Only the dots the count dropped are hidden here; the ones it added are
+  // shown by the next frame, which is also the one that knows where to put
+  // them. Showing them now would flash them at wherever they were last.
+  for (uint8_t k = want; k < MAX_DOTS; k++) {
+    if (r.dots[k] != nullptr && (r.vis_mask & (1u << k)) != 0) {
+      lv_obj_add_flag(r.dots[k], LV_OBJ_FLAG_HIDDEN);
+      r.vis_mask &= (uint8_t) ~(1u << k);
+    }
+  }
+}
+
 // ---------------------------------------------------------------------------
 
 void FlowRenderer::setup(PowerFlow *pf) {
@@ -876,12 +964,10 @@ void FlowRenderer::build_(lv_obj_t *parent) {
     e.bw = (grid_x == COL_L_X && !has_pv) ? 96 : 88;
     e.bw_idle = e.bw;
     e.bh = 28;
-    e.n_dots = 1;
-    e.dot_size = 6;
-    e.dot_x = 237;
-    e.dot_y0 = 118;
-    e.dot_len = 66;
-    e.dot_dir = 1;
+    // Down the one vertical, from under the grid card into the core. The 4 px
+    // inset at each end keeps a 6 px disc off the card edge and out of the
+    // arrowhead; every path below is inset the same way.
+    e.runs.push_back(make_run_({{240, 116}, {240, 186}}, 6));
     this->add_edge_(std::move(e));
   }
   if (has_tap) {
@@ -898,15 +984,10 @@ void FlowRenderer::build_(lv_obj_t *parent) {
     e.bw = 84;
     e.bw_idle = 84;
     e.bh = 28;
-    // The run that carries the head is the one that animates, which reproduces
-    // both dots the mockups draw and gives this edge — which they do not draw
-    // one for — the same treatment. Here the flow is upward, into OnGrid Load.
-    e.n_dots = 1;
-    e.dot_size = 6;
-    e.dot_x = 40;
-    e.dot_y0 = 126;
-    e.dot_len = 19;
-    e.dot_dir = -1;
+    // The U under row 1: down out of the City grid card, left along y = 152,
+    // then up into OnGrid Load. All three runs, which is the point of the
+    // amendment — the corner is where the eye picks the direction up.
+    e.runs.push_back(make_run_({{170, 116}, {170, 152}, {43, 152}, {43, 122}}, 6));
     this->add_edge_(std::move(e));
   }
   if (t_pv != INVALID_INDEX) {
@@ -926,12 +1007,8 @@ void FlowRenderer::build_(lv_obj_t *parent) {
     e.bw = 68;
     e.bw_idle = 68;
     e.bh = 28;
-    e.n_dots = 1;
-    e.dot_size = 6;
-    e.dot_x = 309;
-    e.dot_y0 = 158;
-    e.dot_len = 26;
-    e.dot_dir = 1;
+    // Down out of the PV card, left along y = 153, then down into the core.
+    e.runs.push_back(make_run_({{437, 116}, {437, 153}, {312, 153}, {312, 187}}, 6));
     this->add_edge_(std::move(e));
   }
 
@@ -950,6 +1027,8 @@ void FlowRenderer::build_(lv_obj_t *parent) {
     e.bw = 78;
     e.bw_idle = 78;
     e.bh = 28;
+    // Out of the core, left along y = 389, up into Other Load.
+    e.runs.push_back(make_run_({{170, 354}, {170, 389}, {43, 389}, {43, 360}}, 6));
     this->add_edge_(std::move(e));
   }
   if (d_bat != INVALID_INDEX && t_bat != INVALID_INDEX) {
@@ -972,6 +1051,10 @@ void FlowRenderer::build_(lv_obj_t *parent) {
     e.bw = 78;
     e.bw_idle = 64;
     e.bh = 28;
+    // Declared charging — out of the core, right, up into the battery. The one
+    // run on the diagram that is walked backwards when the sign says so, which
+    // is the same discriminator the arrowhead and the hue already use.
+    e.runs.push_back(make_run_({{312, 354}, {312, 389}, {437, 389}, {437, 360}}, 6));
     this->add_edge_(std::move(e));
   }
 
@@ -1022,12 +1105,22 @@ void FlowRenderer::build_(lv_obj_t *parent) {
     e.bw = has_pv ? 110 : 100;
     e.bw_idle = e.bw;
     e.bh = 34;
-    e.n_dots = 2;
-    e.dot_size = 8;
-    e.dot_x = 236;
-    e.dot_y0 = 356;
-    e.dot_len = (int16_t) (198 + ROW_PITCH * n_last - 42);  // 384 for three rows
-    e.dot_dir = 1;
+    // One run per length between two branch points, top down: 354 -> the first
+    // row's horizontal at 547, then a row pitch apiece. The old single slab ran
+    // the whole trunk at one density, which drew current travelling past three
+    // idle sockets to reach the Boiler; each of these carries only what the
+    // rows above it have left, and a run whose remainder is nothing stands
+    // still. The badge still reports the total, because the total is what
+    // leaves the inverter.
+    //
+    // The last row's branch is 2 px from the end of the drawn bus, so there is
+    // no length below it to animate and none is built.
+    for (int r = 0; r < n_rows; r++) {
+      const int16_t y0 = (r == 0) ? (int16_t) (CORE_B + 4) : (int16_t) (547 + ROW_PITCH * (r - 1));
+      const int16_t y1 = (int16_t) (547 + ROW_PITCH * r);
+      e.runs.push_back(make_run_({{240, y0}, {240, y1}}, 8));
+    }
+    this->e_bus_ = (uint8_t) this->edges_.size();
     this->add_edge_(std::move(e));
   }
 
@@ -1057,6 +1150,18 @@ void FlowRenderer::build_(lv_obj_t *parent) {
     e.bw_idle = 78;
     e.bh = 28;
     e.row = n.row;
+    // Off the bus, out along the horizontal, up the stub into the card — the
+    // branch the original drew nothing on at all. Absolute, like every other
+    // path: these dots live on root_ and the frame adds the container's scroll.
+    // The stub stops at the *bare* height so the run is right whether or not
+    // the arrowhead is there to shorten it.
+    {
+      const int16_t by = (int16_t) (SCROLL_Y + hy + 1);        // 547, the branch
+      const int16_t cx = (int16_t) (vx + 1);                   // 81 or 400, the stub's centre
+      const int16_t off = (int16_t) (is_left ? BUS_X - 3 : BUS_X + 5);  // 4 px clear of the trunk
+      const int16_t top = (int16_t) (SCROLL_Y + card_b + 12);  // 534, below the arrowhead
+      e.runs.push_back(make_run_({{off, by}, {cx, by}, {cx, top}}, 6));
+    }
     this->add_edge_(std::move(e));
     n.edge = (uint8_t) (this->edges_.size() - 1);
   };
@@ -1104,17 +1209,30 @@ void FlowRenderer::build_(lv_obj_t *parent) {
     e.head_state = -2;  // unwritten: the first update places the head and the stub
   }
 
-  // Dots last, on the root: the bus pair runs from 356 to past the scroll
-  // boundary, so they cannot live inside the container.
+  // Dots last, and every one of them on the root rather than in the container.
+  // The bus's first length crosses the scroll boundary, so it could not live
+  // inside; and once one run is outside, having the rest inside would make them
+  // slide apart at the seam the moment the list scrolled. They are placed in
+  // absolute coordinates and frame() adds the container's scroll offset to any
+  // dot below the boundary — which is also the only clipping they get, since
+  // root_ is the whole screen.
+  //
+  // MAX_DOTS objects per run are built whatever the count turns out to be. A
+  // dot is ~150 bytes and the alternative is creating and destroying LVGL
+  // objects from a value update, which is exactly the churn this renderer
+  // avoids everywhere else.
   for (Edge &e : this->edges_) {
-    for (uint8_t k = 0; k < e.n_dots && k < 2; k++) {
-      lv_obj_t *d = this->plain_(this->root_);
-      lv_obj_set_size(d, e.dot_size, e.dot_size);
-      lv_obj_set_style_radius(d, LV_RADIUS_CIRCLE, LV_PART_MAIN);
-      lv_obj_set_style_bg_opa(d, LV_OPA_COVER, LV_PART_MAIN);
-      lv_obj_set_style_bg_color(d, lv_color_hex(e.val_col), LV_PART_MAIN);
-      lv_obj_add_flag(d, LV_OBJ_FLAG_HIDDEN);
-      e.dots[k] = d;
+    for (DotRun &r : e.runs) {
+      for (uint8_t k = 0; k < MAX_DOTS; k++) {
+        lv_obj_t *d = this->plain_(this->root_);
+        lv_obj_set_size(d, r.size, r.size);
+        lv_obj_set_style_radius(d, LV_RADIUS_CIRCLE, LV_PART_MAIN);
+        lv_obj_set_style_bg_opa(d, LV_OPA_COVER, LV_PART_MAIN);
+        lv_obj_set_style_bg_color(d, lv_color_hex(e.val_col), LV_PART_MAIN);
+        lv_obj_add_flag(d, LV_OBJ_FLAG_HIDDEN);
+        r.dots[k] = d;
+        r.last[k] = {INT16_MIN, INT16_MIN};
+      }
     }
   }
 
@@ -1199,9 +1317,16 @@ void FlowRenderer::build_(lv_obj_t *parent) {
   }
   for (const Edge &e : this->edges_) {
     const Terminal *t = this->term_(e.terminal);
-    ESP_LOGI(TAG, "  edge %d  %u runs, badge %dx%d centred %d,%d, %u dots  %s", (int) e.kind,
-             (unsigned) e.segs.size(), (int) e.bw, (int) e.bh, (int) e.bcx, (int) e.bcy,
-             (unsigned) e.n_dots, t != nullptr ? t->name.c_str() : "-");
+    std::string paths;
+    for (const DotRun &r : e.runs) {
+      char buf[24];
+      snprintf(buf, sizeof(buf), "%dpx ", (int) r.len);
+      paths += buf;
+    }
+    ESP_LOGI(TAG, "  edge %d  %u segs, badge %dx%d centred %d,%d, %u dot runs [%s] %s",
+             (int) e.kind, (unsigned) e.segs.size(), (int) e.bw, (int) e.bh, (int) e.bcx,
+             (int) e.bcy, (unsigned) e.runs.size(), paths.c_str(),
+             t != nullptr ? t->name.c_str() : "-");
   }
 }
 
@@ -1251,18 +1376,32 @@ const Device *FlowRenderer::dev_(uint8_t index) const {
 /// unreachable every meter reads NaN at once, so every edge would otherwise be
 /// de-energized and the whole diagram would claim the power is out. It is not:
 /// the answer is "we do not know", and no ✕ is drawn at all (§6.2).
+/// §6, amended 2026-08-25 — **an idle edge keeps its role colour.**
+///
+/// The original greyed a wire the moment its power fell below `idle_below`,
+/// which conflated two different facts: *nothing is flowing* and *nothing is
+/// connected*. A socket sitting at 0 W still has mains at its terminals; a
+/// socket whose switch is off does not. Grey is for the second, and now says
+/// only that: `off_line` for a deliberately open edge, `nodata_line` for one
+/// whose meter has gone. `idle_line` survives for NO_DATA, where the wire is
+/// drawn but nothing is known about it at all.
+///
+/// So an idle edge reads live: role colour, `0 W` on the badge, no arrowhead
+/// and no dots. The colour says it is energised, the empty badge and the still
+/// wire say it is not carrying.
 uint32_t FlowRenderer::edge_line_color_(const Edge &e, EdgeState st) const {
   if (!this->ha_contact_)
     return pal::nodata_line;
   switch (st) {
     case EdgeState::ACTIVE:
+    case EdgeState::IDLE:
       return e.line_col;
     case EdgeState::OPEN:
       return pal::off_line;
     case EdgeState::DE_ENERGIZED:
       return pal::nodata_line;
     default:
-      return pal::idle_line;  // IDLE and NO_DATA: the wire is there and quiet
+      return pal::idle_line;  // NO_DATA: the wire is there and nothing is known
   }
 }
 
@@ -1506,11 +1645,22 @@ void FlowRenderer::set_badge_(Edge &e, const std::string &txt, uint32_t line, ui
                               int width, const lv_font_t *font) {
   if (e.badge == nullptr)
     return;
+  // Where the pill sits, in absolute unscrolled coordinates, whatever else this
+  // call decides to do. §5.4 has the badge hide the run it labels, and now that
+  // a run travels its whole path there are dots that would otherwise cross it —
+  // a consumer's badge sits squarely on its horizontal branch, and the bus
+  // total sits on the trunk. They are on root_, above the pill, so frame() hides
+  // a dot that lands inside this rectangle instead of drawing it over the text.
+  e.badge_hit = {(int16_t) (e.bcx - width / 2),
+                 (int16_t) (e.bcy + ROW_PITCH * e.row - e.bh / 2 +
+                            (e.kind == Kind::CONSUMER ? SCROLL_Y : 0)),
+                 (int16_t) width, e.bh};
   if (txt.empty()) {
     if (e.badge_shown) {
       e.badge_shown = false;
       set_hidden(e.badge, true);
     }
+    e.badge_hit.w = 0;  // no pill, nothing to hide behind
     return;
   }
   if (!e.badge_shown) {
@@ -1573,6 +1723,8 @@ void FlowRenderer::update_edge_(Edge &e) {
   const uint32_t role_line = discharging ? pal::discharge_line : e.line_col;
   const uint32_t role_val = discharging ? pal::discharge : e.val_col;
 
+  // `role_line` and edge_line_color_() agree on an ACTIVE edge; the call is what
+  // resolves the other four states, the idle one included since the amendment.
   const uint32_t col = active ? role_line : this->edge_line_color_(e, st);
   if (col != e.col_line) {
     e.col_line = col;
@@ -1582,9 +1734,17 @@ void FlowRenderer::update_edge_(Edge &e) {
     for (lv_obj_t *o : e.head)
       if (o != nullptr)
         lv_obj_set_style_bg_color(o, c, LV_PART_MAIN);
-    for (lv_obj_t *o : e.dots)
-      if (o != nullptr)
-        lv_obj_set_style_bg_color(o, lv_color_hex(role_val), LV_PART_MAIN);
+  }
+  // The dots follow the *value* colour, not the line's, and it moves separately:
+  // the battery's line and dots both flip on the sign, but a run that stops
+  // animating leaves its colour alone.
+  if (role_val != e.col_dot) {
+    e.col_dot = role_val;
+    const lv_color_t c = lv_color_hex(role_val);
+    for (DotRun &r : e.runs)
+      for (lv_obj_t *o : r.dots)
+        if (o != nullptr)
+          lv_obj_set_style_bg_color(o, c, LV_PART_MAIN);
   }
 
   // --- the head: only an active edge has a direction worth drawing ---------
@@ -1645,17 +1805,66 @@ void FlowRenderer::update_edge_(Edge &e) {
   this->set_badge_(e, txt, col, bcol, bw, bfont);
 
   // --- dots ----------------------------------------------------------------
-  const bool run = active && is_valid(v) && e.n_dots > 0 && e.dot_len > 0;
-  if (run != e.animate) {
-    e.animate = run;
-    for (lv_obj_t *o : e.dots)
-      set_hidden(o, !run);
+  //
+  // The bus is drained row by row and does its own sizing; every other edge has
+  // one run and it carries the edge's own figure. A consumer's run sinks with
+  // its row.
+  const bool run = active && is_valid(v);
+  for (DotRun &r : e.runs) {
+    r.dy = (e.kind == Kind::CONSUMER) ? (int16_t) (ROW_PITCH * e.row) : (int16_t) 0;
+    r.rev = discharging;
   }
-  if (run) {
-    const float k = std::sqrt(std::min(1.0f, std::fabs(v) / DOT_SPEED_REF));
-    const float px_s = DOT_SPEED_MIN + (DOT_SPEED_MAX - DOT_SPEED_MIN) * k;
-    e.speed = px_s / (float) e.dot_len;  // runs per second
-  }
+  if (e.kind == Kind::BUS)
+    this->update_bus_(e);
+  else
+    for (DotRun &r : e.runs)
+      this->size_run_(r, v, run);
+}
+
+/// The trunk, given a current per length rather than one for the whole thing.
+///
+/// Each run carries the sum of what the rows *below* it are drawing, and it is
+/// built up from the rows rather than subtracted from the total. The difference
+/// matters and it was measured: the obvious version — total, less `Other`, less
+/// each row as it taps off — leaves a residual of a few watts that never
+/// cancels, because the total is a solved figure over the 60 s window and a
+/// socket's reading is measured over 10 s. On this installation, with BOLIVAR,
+/// Desk and the Boiler all asleep, that residual read 5 W and drew a moving dot
+/// down two hundred pixels of dead wire to reach the Boiler. Which is the
+/// complaint this amendment exists to answer, reintroduced by the fix for it.
+///
+/// A sum of same-window measurements has no such floor. It is exactly zero when
+/// nothing below is drawing, and a run at zero stands still.
+///
+/// The badge still reports the inverter's output, and that is a larger number
+/// than the top run carries. It should be: `Other` — the unmetered remainder —
+/// is drawn leaving at the core, above the first branch, so by the diagram's own
+/// account the trunk never carries it.
+void FlowRenderer::update_bus_(Edge &e) {
+  const Terminal *t = this->term_(e.terminal);
+  const bool on = this->ha_contact_ && t != nullptr && t->state == EdgeState::ACTIVE;
+
+  // Row totals first, then a running sum from the bottom up.
+  float below[MAX_ROWS] = {};
+  const size_t rows = std::min(e.runs.size(), (size_t) MAX_ROWS);
+  for (const std::vector<uint8_t> *col : {&this->col_left_, &this->col_right_})
+    for (uint8_t idx : *col) {
+      const Node &n = this->nodes_[idx];
+      if (n.row < 0 || (size_t) n.row >= rows)
+        continue;
+      const Terminal *ct = this->term_(n.terminal);
+      // ACTIVE only: an open switch draws nothing and a dead meter is not a
+      // measurement. Excluding an unknown understates the density, which is the
+      // side of §6.9 to be wrong on.
+      if (ct != nullptr && ct->state == EdgeState::ACTIVE && is_valid(ct->display))
+        below[n.row] += std::fabs(ct->display);
+    }
+  for (size_t i = rows; i-- > 1;)
+    below[i - 1] += below[i];
+
+  const float floor_w = this->pf_->idle_below();
+  for (size_t i = 0; i < rows; i++)
+    this->size_run_(e.runs[i], below[i], on && below[i] > floor_w);
 }
 
 /// §4.3 — entries that are off or no-data sink to the last rows of their column,
@@ -1765,20 +1974,52 @@ void FlowRenderer::frame(uint32_t now) {
   // the length of the bus.
   const float secs = std::min<uint32_t>(dt, 250) / 1000.0f;
 
+  // Every dot is on root_ in absolute coordinates, so anything below the scroll
+  // boundary has to be moved by hand and clipped by hand. Both are no-ops in the
+  // configurations that do not scroll, which is every one that fits.
+  const int32_t sy =
+      this->scroll_ != nullptr ? -(int32_t) lv_obj_get_scroll_y(this->scroll_) : 0;
+
   for (Edge &e : this->edges_) {
-    if (!e.animate || e.n_dots == 0 || e.dot_len <= 0)
-      continue;
-    e.phase += e.speed * secs;
-    e.phase -= std::floor(e.phase);
-    for (uint8_t k = 0; k < e.n_dots && k < 2; k++) {
-      lv_obj_t *dot = e.dots[k];
-      if (dot == nullptr)
+    for (DotRun &r : e.runs) {
+      if (!r.animate || r.n == 0 || r.len <= 0)
         continue;
-      float p = e.phase + (float) k / (float) e.n_dots;  // two dots, 50 % apart
-      p -= std::floor(p);
-      const int along = (int) (p * (float) e.dot_len);
-      lv_obj_set_pos(dot, e.dot_x,
-                     e.dot_dir > 0 ? e.dot_y0 + along : e.dot_y0 + e.dot_len - along);
+      r.phase += r.speed * secs;
+      r.phase -= std::floor(r.phase);
+      for (uint8_t k = 0; k < r.n; k++) {
+        lv_obj_t *dot = r.dots[k];
+        if (dot == nullptr)
+          continue;
+        float p = r.phase + (float) k / (float) r.n;  // evenly spaced round the loop
+        p -= std::floor(p);
+        if (r.rev)
+          p = 1.0f - p;
+        Pt c = run_point_(r, p);
+        int32_t y = c.y + r.dy;
+        // Behind its own badge, before the scroll is applied — the pill's
+        // rectangle is stored in the same unscrolled space.
+        const Rect &b = e.badge_hit;
+        bool vis = !(b.w > 0 && c.x >= b.x && c.x < b.x + b.w && y >= b.y && y < b.y + b.h);
+        if (y >= SCROLL_Y) {
+          y += sy;
+          vis = vis && y >= SCROLL_Y && y < SCROLL_Y + SCROLL_H;
+        }
+        const uint8_t bit = (uint8_t) (1u << k);
+        if (vis != ((r.vis_mask & bit) != 0)) {
+          r.vis_mask ^= bit;
+          set_hidden(dot, !vis);
+        }
+        if (!vis)
+          continue;
+        // The dot's centre, minus half its size. At the slow end of the range a
+        // dot advances two thirds of a pixel per frame, so three frames in four
+        // have nothing to write and LVGL has nothing to invalidate.
+        const Pt at{(int16_t) (c.x - r.size / 2), (int16_t) (y - r.size / 2)};
+        if (at.x != r.last[k].x || at.y != r.last[k].y) {
+          r.last[k] = at;
+          lv_obj_set_pos(dot, at.x, at.y);
+        }
+      }
     }
   }
 }
