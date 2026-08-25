@@ -18,6 +18,7 @@ import base64
 import struct
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 
 BMP_PATH = "/pf-screenshot.bmp"
@@ -26,6 +27,21 @@ BMP_PATH = "/pf-screenshot.bmp"
 HEADER_LEN = 14 + 40 + 12
 BI_BITFIELDS = 3
 RGB565_MASKS = (0xF800, 0x07E0, 0x001F)
+
+
+def endpoint(target):
+    """Turn whatever the caller typed into the BMP URL.
+
+    A bare host, a host with a scheme, a trailing slash — all mean the same
+    thing here, and the panel answers a URL it has no handler for by closing
+    the connection with no response at all, which is a baffling thing to be
+    told when the only mistake was leaving the path off."""
+    if "://" not in target:
+        target = "http://" + target
+    parts = urllib.parse.urlsplit(target)
+    if parts.path in ("", "/"):
+        parts = parts._replace(path=BMP_PATH)
+    return urllib.parse.urlunsplit(parts)
 
 
 def fetch(url, user, password, timeout):
@@ -104,7 +120,8 @@ def to_image(data, w, h, stride):
 def main():
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("--host", help="panel hostname or IP, e.g. bms-panel.local")
-    ap.add_argument("--url", help="full URL, overrides --host")
+    ap.add_argument("--url", help="full URL; a bare host works too, and a URL "
+                                  "with no path gets " + BMP_PATH)
     ap.add_argument("--user", help="username, if the web server has auth")
     ap.add_argument("--password", help="password, if the web server has auth")
     ap.add_argument("-o", "--out", help="output PNG (default screenshot-<ts>.png)")
@@ -112,11 +129,8 @@ def main():
     ap.add_argument("--retries", type=int, default=3, help="attempts before giving up")
     args = ap.parse_args()
 
-    if args.url:
-        url = args.url
-    elif args.host:
-        host = args.host if "://" in args.host else "http://" + args.host
-        url = host.rstrip("/") + BMP_PATH
+    if args.url or args.host:
+        url = endpoint(args.url or args.host)
     else:
         ap.error("need --host or --url")
 
@@ -133,6 +147,10 @@ def main():
         except OSError as err:
             retryable = True
             message = str(err)
+            if "closed connection" in message:
+                # What the panel does with a URL no handler claims. Reaching
+                # this after the retries almost always means the wrong path.
+                message += " (no handler for this URL - expected {})".format(BMP_PATH)
         if not retryable or attempt == args.retries - 1:
             raise SystemExit("{}: {}".format(url, message))
         print("{}; retrying...".format(message))

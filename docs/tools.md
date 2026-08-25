@@ -10,6 +10,11 @@ one PNG:
 python tools/screenshot.py --host bms-panel.local -o shot.png
 ```
 
+`--host` and `--url` both accept a bare name, an IP or a full URL, and a URL
+with no path of its own gets `/pf-screenshot.bmp` appended — the panel answers
+a URL no handler claims by closing the connection with no response at all,
+which is an unhelpful thing to be told for a missing path.
+
 The panel serves the active LVGL screen at `/pf-screenshot.bmp` as a 16-bit
 BMP — one capture per request, nothing cached — and the script converts it to
 a PNG. A 480 × 800 frame is 768 KB and arrives in about a second. Whatever
