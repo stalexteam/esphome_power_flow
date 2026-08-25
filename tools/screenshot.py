@@ -1,119 +1,69 @@
-"""One run, one screenshot.
+"""One request, one screenshot.
 
-Triggers the panel's `esphome.<node>_screenshot` service over the Home
-Assistant REST API, captures the base64 frame the firmware dumps into its
-serial log, and writes a PNG. The firmware side is `debug_screenshot: true`
-on the `power_flow:` block (see tools.md).
+Fetches `/pf-screenshot.bmp` from the panel — the active LVGL screen, captured
+on demand and served as a 16-bit BMP — and writes it out as a PNG. The
+firmware side is `debug_screenshot: true` on the `power_flow:` block, which
+also serves a one-page viewer at `/pf-screenshot` (see tools.md).
 
 Usage:
-    python screenshot.py --port COM7 --env-file ../DEV/ha.env --node bms-panel
-    python screenshot.py --port COM7 --no-trigger        # trigger by hand in HA
+    python screenshot.py --host bms-panel.local
+    python screenshot.py --host 192.168.1.42 -o shot.png
+    python screenshot.py --url http://panel/pf-screenshot.bmp --user admin --password s3cr3t
 
-HA_URL and HA_TOKEN come from --env-file or the environment. Requires
-pyserial and Pillow; numpy is optional but makes decoding instant.
+Requires Pillow; numpy is optional but makes decoding instant.
 """
 
 import argparse
 import base64
-import os
-import re
-import sys
+import struct
 import time
+import urllib.error
 import urllib.request
-import zlib
 
-import serial
-
-# ESPHome colours its log lines; strip the ANSI escapes before matching.
-ANSI_RE = re.compile(r"\x1b\[[0-9;]*m")
-LINE_RE = re.compile(r"\[pf\.screenshot:\d+\]:\s*(.*)$")
-BEGIN_RE = re.compile(
-    r"BEGIN w=(\d+) h=(\d+) stride=(\d+) fmt=(\S+) len=(\d+) crc=([0-9a-f]{8})"
-)
+BMP_PATH = "/pf-screenshot.bmp"
+# BITMAPFILEHEADER + BITMAPINFOHEADER + the three BI_BITFIELDS masks, which is
+# also where the pixels start in the file the firmware writes.
+HEADER_LEN = 14 + 40 + 12
+BI_BITFIELDS = 3
+RGB565_MASKS = (0xF800, 0x07E0, 0x001F)
 
 
-def read_env_file(path):
-    values = {}
-    with open(path, encoding="utf-8") as fh:
-        for line in fh:
-            line = line.strip()
-            if line and not line.startswith("#") and "=" in line:
-                key, _, value = line.partition("=")
-                value = value.strip()
-                if value[:1] in "'\"" and value.find(value[0], 1) > 0:
-                    value = value[1 : value.find(value[0], 1)]
-                else:
-                    value = value.split("#", 1)[0].strip()
-                values[key.strip()] = value
-    return values
+def fetch(url, user, password, timeout):
+    req = urllib.request.Request(url)
+    if user is not None:
+        token = base64.b64encode("{}:{}".format(user, password or "").encode()).decode()
+        req.add_header("Authorization", "Basic " + token)
+    with urllib.request.urlopen(req, timeout=timeout) as resp:
+        return resp.read()
 
 
-def trigger(ha_url, token, node):
-    service = "esphome/{}_screenshot".format(node.replace("-", "_"))
-    req = urllib.request.Request(
-        "{}/api/services/{}".format(ha_url.rstrip("/"), service),
-        data=b"{}",
-        headers={
-            "Authorization": "Bearer " + token,
-            "Content-Type": "application/json",
-        },
-    )
-    urllib.request.urlopen(req, timeout=10).read()
+def parse_bmp(data):
+    """Return (pixels, w, h, stride) for the firmware's RGB565 BMP.
 
-
-def receive(s, timeout, on_stall=None):
-    """Read the serial log until one complete BEGIN..END frame arrives.
-
-    A service call that lands while the panel's HA connection is
-    re-establishing is dropped silently, so if no BEGIN shows up within 15 s
-    `on_stall` is invoked once to fire the trigger again."""
-    start = time.time()
-    deadline = start + timeout
-    meta, chunks, buffer = None, [], b""
-    while time.time() < deadline:
-        if on_stall and meta is None and time.time() > start + 15:
-            print("no frame yet, re-triggering once...")
-            on_stall()
-            on_stall = None
-        buffer += s.read(4096)
-        *lines, buffer = buffer.split(b"\n")
-        for raw in lines:
-            line = ANSI_RE.sub("", raw.decode("utf-8", "replace")).strip()
-            m = LINE_RE.search(line)
-            if m is None:
-                continue
-            payload = m.group(1)
-            if payload.startswith("BEGIN"):
-                b = BEGIN_RE.search(payload)
-                if b is None:
-                    raise SystemExit("unparseable BEGIN line: " + payload)
-                meta, chunks = b.groups(), []
-            elif payload.startswith("D") and meta is not None:
-                chunks.append(payload[1:])
-            elif payload.startswith("END") and meta is not None:
-                return meta, "".join(chunks)
-    raise SystemExit(
-        "timed out after {}s without a complete frame - is "
-        "`debug_screenshot: true` flashed, and did the service fire?".format(timeout)
-    )
-
-
-def decode(meta, b64):
-    """Return (pixels, w, h, stride); raise ValueError if the capture lost
-    bytes in transit (retryable), SystemExit on a protocol mismatch."""
-    w, h, stride, fmt, length, crc = meta
-    w, h, stride, length = int(w), int(h), int(stride), int(length)
-    if fmt != "RGB565LE":
-        raise SystemExit("unexpected pixel format: " + fmt)
-    try:
-        data = base64.b64decode(b64)
-    except Exception as err:
-        raise ValueError("base64 damaged in transit ({})".format(err)) from err
-    if len(data) != length:
-        raise ValueError("got {} bytes, expected {}".format(len(data), length))
-    if zlib.crc32(data) & 0xFFFFFFFF != int(crc, 16):
-        raise ValueError("CRC mismatch")
-    return data, w, h, stride
+    Everything here is a property of the file the panel writes, so a mismatch
+    means the two halves of this tool have drifted apart, not that a capture
+    went wrong: say which field disagrees rather than guessing at the pixels."""
+    if len(data) < HEADER_LEN or data[:2] != b"BM":
+        raise SystemExit("not a BMP - got {} bytes starting {!r}".format(len(data), data[:16]))
+    offbits, hdr_size, w, h, planes, bpp, compression = struct.unpack_from("<IIiiHHI", data, 10)
+    masks = struct.unpack_from("<3I", data, 14 + hdr_size)
+    if hdr_size != 40 or planes != 1:
+        raise SystemExit("unexpected BMP header: size={} planes={}".format(hdr_size, planes))
+    if bpp != 16 or compression != BI_BITFIELDS or masks != RGB565_MASKS:
+        raise SystemExit(
+            "expected RGB565 bitfields, got bpp={} compression={} masks={}".format(
+                bpp, compression, tuple(hex(m) for m in masks)
+            )
+        )
+    top_down, h = h < 0, abs(h)
+    stride = ((w * bpp + 31) // 32) * 4
+    expected = offbits + stride * h
+    if len(data) != expected:
+        raise SystemExit("truncated: {} bytes, header says {}".format(len(data), expected))
+    pixels = data[offbits:]
+    if not top_down:
+        pixels = b"".join(pixels[y * stride : (y + 1) * stride] for y in range(h - 1, -1, -1))
+    return pixels, w, h, stride
 
 
 def to_image(data, w, h, stride):
@@ -153,53 +103,43 @@ def to_image(data, w, h, stride):
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
-    ap.add_argument("--port", default="COM7", help="serial port (default COM7)")
-    ap.add_argument("--node", default="bms-panel", help="ESPHome node name")
-    ap.add_argument("--env-file", help="file with HA_URL=... and HA_TOKEN=...")
+    ap.add_argument("--host", help="panel hostname or IP, e.g. bms-panel.local")
+    ap.add_argument("--url", help="full URL, overrides --host")
+    ap.add_argument("--user", help="username, if the web server has auth")
+    ap.add_argument("--password", help="password, if the web server has auth")
     ap.add_argument("-o", "--out", help="output PNG (default screenshot-<ts>.png)")
-    ap.add_argument("--timeout", type=float, default=90, help="seconds to wait")
-    ap.add_argument(
-        "--no-trigger",
-        action="store_true",
-        help="only listen; fire the service yourself from HA Developer Tools",
-    )
+    ap.add_argument("--timeout", type=float, default=20, help="seconds per request")
+    ap.add_argument("--retries", type=int, default=3, help="attempts before giving up")
     args = ap.parse_args()
 
-    env = dict(os.environ)
-    if args.env_file:
-        env.update(read_env_file(args.env_file))
-    if not args.no_trigger and not (env.get("HA_URL") and env.get("HA_TOKEN")):
-        ap.error("need HA_URL and HA_TOKEN (via --env-file or environment), "
-                 "or --no-trigger")
+    if args.url:
+        url = args.url
+    elif args.host:
+        host = args.host if "://" in args.host else "http://" + args.host
+        url = host.rstrip("/") + BMP_PATH
+    else:
+        ap.error("need --host or --url")
 
-    # The port must be open before the service fires, or the head of the
-    # dump is lost.
-    fire = None
-    if not args.no_trigger:
-        fire = lambda: trigger(env["HA_URL"], env["HA_TOKEN"], args.node)
-    s = serial.Serial(args.port, 115200, timeout=1)
-    try:
-        s.reset_input_buffer()
-        if args.no_trigger:
-            print("listening on {} - fire esphome.{}_screenshot in HA".format(
-                args.port, args.node.replace("-", "_")))
-        for attempt in range(3):
-            if fire is not None:
-                fire()
-                print("triggered, receiving (takes ~1 min)...")
-            try:
-                frame = decode(*receive(s, args.timeout, on_stall=fire))
-                break
-            except ValueError as err:
-                # The serial link dropped bytes; the frame is gone, ask again.
-                if fire is None or attempt == 2:
-                    raise SystemExit("{} - giving up".format(err))
-                print("{}; retrying...".format(err))
-    finally:
-        s.close()
+    for attempt in range(args.retries):
+        try:
+            data = fetch(url, args.user, args.password, args.timeout)
+            break
+        except urllib.error.HTTPError as err:
+            # 503 is the panel saying another capture is in flight, or that its
+            # main loop has not answered yet; both are worth one more try.
+            retryable = err.code == 503
+            body = err.read().decode("utf-8", "replace").strip()
+            message = "{} {} - {}".format(err.code, err.reason, body)
+        except OSError as err:
+            retryable = True
+            message = str(err)
+        if not retryable or attempt == args.retries - 1:
+            raise SystemExit("{}: {}".format(url, message))
+        print("{}; retrying...".format(message))
+        time.sleep(1)
 
     out = args.out or "screenshot-{}.png".format(time.strftime("%Y%m%d-%H%M%S"))
-    to_image(*frame).save(out)
+    to_image(*parse_bmp(data)).save(out)
     print(out)
 
 

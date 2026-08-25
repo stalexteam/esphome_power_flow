@@ -42,8 +42,8 @@ substitutions:
 #  they simply declare no `switch:` at all.
 # =============================================================================
 power_flow:
-  # Debug screenshots over the serial log (docs/tools.md). Off by default;
-  # uncomment here and `custom_services: true` in the `api:` block to use.
+  # Debug screenshots over HTTP (docs/tools.md). Off by default; uncommenting
+  # it serves /pf-screenshot and /pf-screenshot.bmp and pulls in web_server_base.
   # debug_screenshot: true
   devices:
     - id: grid
@@ -238,7 +238,6 @@ captive_portal:
 
 api:
   reboot_timeout: 0s     # a wall panel must not reboot itself while HA is down
-  # custom_services: true   # needed only for debug_screenshot (docs/tools.md)
 
 # NOTE: api's on_client_connected/on_client_disconnected fire per connection,
 # and there are normally two clients (Home Assistant and the ESPHome log

@@ -62,7 +62,18 @@ DEPENDENCIES = ["api", "lvgl"]
 
 # The sensors and text sensors below are created in codegen rather than by the
 # user, so the platforms they belong to have to be pulled in explicitly.
-AUTO_LOAD = ["sensor", "text_sensor", "homeassistant"]
+_AUTO_LOAD = ["sensor", "text_sensor", "homeassistant"]
+
+
+def AUTO_LOAD(config):  # noqa: N802 — ESPHome's own name for this hook
+    """`debug_screenshot: true` serves the frame over HTTP, so it needs the
+    shared web server; nothing else here does. ESPHome calls this with the
+    validated config precisely so an option can pull a component in, which
+    keeps `web_server_base` out of every build that does not ask for it."""
+    if config.get(CONF_DEBUG_SCREENSHOT):
+        return [*_AUTO_LOAD, "web_server_base"]
+    return _AUTO_LOAD
+
 
 power_flow_ns = cg.esphome_ns.namespace("power_flow")
 PowerFlow = power_flow_ns.class_("PowerFlow", cg.Component)
@@ -727,11 +738,9 @@ CONFIG_SCHEMA = cv.All(
             cv.Optional(CONF_FIGURE, default="auto"): cv.enum(
                 FIGURE_MODES, lower=True
             ),
-            # Debug tooling, off by default: a Home Assistant service that
-            # dumps the active screen into the serial log as base64, for
-            # tools/screenshot.py to reassemble into a PNG. Needs
-            # `custom_services: true` in the `api:` block (checked in final
-            # validation).
+            # Debug tooling, off by default: serves the active screen as a BMP
+            # over HTTP for tools/screenshot.py and for a browser. Pulls in
+            # `web_server_base` (see AUTO_LOAD) and LVGL's snapshot module.
             cv.GenerateID(CONF_SCREENSHOT_ID): cv.declare_id(PfScreenshot),
             cv.Optional(CONF_DEBUG_SCREENSHOT, default=False): cv.boolean,
             # Required as a block: a missing face is a blank label, and a blank
@@ -800,24 +809,8 @@ def _inject_icon_glyphs(config):
     return config
 
 
-def _require_custom_services(config):
-    """`register_service()` is compiled out of the api component unless the
-    YAML opts in, and the C++ static_assert that would eventually say so is
-    several minutes of build away. Fail at validation instead."""
-    if not config.get(CONF_DEBUG_SCREENSHOT):
-        return config
-    api_conf = fv.full_config.get().get("api") or {}
-    if not api_conf.get("custom_services"):
-        raise cv.Invalid(
-            "`debug_screenshot: true` registers a Home Assistant service, which "
-            "needs `custom_services: true` in the `api:` block.",
-            [CONF_DEBUG_SCREENSHOT],
-        )
-    return config
-
-
 def _final_validate(config):
-    return _require_custom_services(_inject_icon_glyphs(config))
+    return _inject_icon_glyphs(config)
 
 
 FINAL_VALIDATE_SCHEMA = _final_validate
