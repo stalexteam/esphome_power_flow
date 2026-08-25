@@ -58,4 +58,6 @@ logs an error, and the relay does not move. Everything else works without it.
 | [Configuration reference](docs/configuration.md) | every option: devices, terminals, consumers, tuning, inference, fonts |
 | [Tools](docs/tools.md) | pixel-perfect screenshots of the panel over the serial log |
 | [Example config](examples/JC4880P443.yaml) | a full panel, sectioned by how often each part changes |
+| [Panel + JK-BMS chimera](examples/JC4880P443+JKBMS_BT.yaml) | one firmware that is both the panel and the JK-BMS BLE bridge |
+| [Chimera bring-up](docs/JC4880P443+JKBMS_BT.md) | how it works, the mandatory C6 Bluetooth reflash, adapting, troubleshooting |
 | [License](LICENSE) | GPL-3.0 |

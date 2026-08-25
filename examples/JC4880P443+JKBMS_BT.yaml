@@ -8,7 +8,7 @@
 #  those same entities back from HA for its own display. HA stays the single
 #  source the diagram reads; the cost is one HA round-trip of latency.
 #
-#  READ JC4880P443+JKBMS_BT.md BEFORE FLASHING. In particular: a stock
+#  READ docs/JC4880P443+JKBMS_BT.md BEFORE FLASHING. In particular: a stock
 #  Guition board ships its ESP32-C6 with a Wi-Fi-only firmware, and BLE stays
 #  dead ("Bluetooth stack is not enabled") until you press Install once on
 #  the "C6 firmware" update entity this config creates. The .md walks through

@@ -7,7 +7,7 @@ publishes every battery reading to Home Assistant, and then subscribes to
 those same entities back for its own screens. It replaces the usual separate
 ESP32 dongle running [syssi/esphome-jk-bms](https://github.com/syssi/esphome-jk-bms).
 
-Config: [`JC4880P443+JKBMS_BT.yaml`](JC4880P443+JKBMS_BT.yaml).
+Config: [`JC4880P443+JKBMS_BT.yaml`](../examples/JC4880P443+JKBMS_BT.yaml).
 
 ## How the data flows
 
