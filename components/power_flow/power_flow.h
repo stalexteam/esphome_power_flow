@@ -339,6 +339,11 @@ class PowerFlow : public Component {
   /// |P_battery| below which the battery counts as at rest, for both the
   /// headline figure and the baseline fit's sampling condition.
   void set_battery_deadband(float watts) { this->battery_deadband_ = watts; }
+  /// Fired when the battery crosses between rest, charging and discharging —
+  /// the earliest reliable sign that the grid failed or returned (§7 amendment
+  /// of 2026-09-03). The YAML binds the screen wake; the component knows
+  /// nothing about backlights, same as with taps.
+  void set_on_battery_transition(Trigger<> *t) { this->on_battery_transition_ = t; }
   void set_figure_mode(FigureMode mode) { this->figure_mode_ = mode; }
   PowerFlowStyle &style() { return this->style_; }
 
@@ -431,6 +436,8 @@ class PowerFlow : public Component {
 
   BaselineFit baseline_;
   GridLossInference inference_;
+  BatteryActivityDetector battery_activity_;
+  Trigger<> *on_battery_transition_{nullptr};
   /// Owned by the component but written entirely in power_flow_render.cpp, so
   /// the drawing and the arithmetic stay in separate files. Null until setup()
   /// and on any build without LVGL.

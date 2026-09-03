@@ -212,6 +212,16 @@ power_flow:
   # action above because it opens a different one.
   on_node_click:
     - lvgl.page.show: pg_load
+  # The battery starting or stopping is the earliest reliable sign the grid
+  # failed or returned — the grid meter takes minutes to be declared
+  # unavailable, the BMS reports in seconds. Wake the screen so the outage is
+  # seen happening; lvgl.resume resets the inactivity timer, so on_idle puts
+  # the panel back to sleep after its usual timeout.
+  on_battery_transition:
+    - lvgl.resume:
+    - light.turn_on:
+        id: backlight
+        brightness: 80%
 
   # The only appearance left in YAML. Every colour is a constant in the
   # renderer; fonts cannot follow because ESPHome builds them in section 3 at

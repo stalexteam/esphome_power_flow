@@ -172,6 +172,7 @@ CONF_ID_KEY = "key"
 CONF_BATTERY_PARENT_ID = "battery_parent_id"
 CONF_ON_BACK = "on_back"
 CONF_ON_NODE_CLICK = "on_node_click"
+CONF_ON_BATTERY_TRANSITION = "on_battery_transition"
 CONF_LOAD_PARENT_ID = "load_parent_id"
 CONF_TIME_ID = "time_id"
 CONF_SUM = "sum"
@@ -711,6 +712,17 @@ CONFIG_SCHEMA = cv.All(
             cv.Optional(CONF_ON_NODE_CLICK): automation.validate_automation(
                 {cv.GenerateID(CONF_TRIGGER_ID): cv.declare_id(DeviceClickTrigger)}
             ),
+            # Run when the battery crosses between rest / charging /
+            # discharging — the earliest reliable sign that the grid failed or
+            # returned, since the grid meter takes minutes to be declared
+            # unavailable and the BMS reports in seconds. Classified on the
+            # raw reading against `battery_deadband`, with hysteresis on the
+            # way back to rest so the charge tail cannot flutter it. Bind the
+            # screen wake here (lvgl.resume + backlight on); the component
+            # itself knows nothing about backlights, same as with taps (§7).
+            cv.Optional(CONF_ON_BATTERY_TRANSITION): automation.validate_automation(
+                {cv.GenerateID(CONF_TRIGGER_ID): cv.declare_id(DeviceClickTrigger)}
+            ),
             cv.Optional(
                 CONF_AVERAGE_WINDOW, default="60s"
             ): cv.positive_time_period_milliseconds,
@@ -1035,6 +1047,10 @@ async def to_code(config):
     for conf in config.get(CONF_ON_NODE_CLICK, []):
         trigger = cg.new_Pvariable(conf[CONF_TRIGGER_ID])
         cg.add(var.set_on_node_click(trigger))
+        await automation.build_automation(trigger, [], conf)
+    for conf in config.get(CONF_ON_BATTERY_TRANSITION, []):
+        trigger = cg.new_Pvariable(conf[CONF_TRIGGER_ID])
+        cg.add(var.set_on_battery_transition(trigger))
         await automation.build_automation(trigger, [], conf)
     cg.add(var.set_average_window(config[CONF_AVERAGE_WINDOW]))
     cg.add(var.set_display_window(config[CONF_DISPLAY_WINDOW]))

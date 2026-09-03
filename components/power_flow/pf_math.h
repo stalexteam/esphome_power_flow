@@ -361,6 +361,38 @@ enum class SupplyMode : uint8_t {
 SupplyMode classify_supply(float p_grid, float p_battery, bool grid_alive, float idle_below);
 
 // ---------------------------------------------------------------------------
+// §7  Screen wake (amendment of 2026-09-03)
+// ---------------------------------------------------------------------------
+//
+// The battery reacting is the earliest reliable sign that the grid failed or
+// returned: the grid meter needs minutes to be declared unavailable — the same
+// lag §6.7 exists to beat — while the BMS reports within seconds. The panel
+// wakes its screen on these transitions; the classifier lives here so it can
+// be tested off-target.
+//
+enum class BatteryActivity : uint8_t { UNKNOWN, REST, CHARGE, DISCHARGE };
+
+class BatteryActivityDetector {
+ public:
+  /// The same figure that gates everything else: |P_battery| below = at rest.
+  void set_deadband(float watts);
+
+  /// Feed the newest raw battery reading (BMS sign convention: + charges).
+  /// Returns true when the battery moved between two *known* states — the
+  /// caller's cue to wake the screen. The first classification after power-up
+  /// is silent, and NaN is not evidence: an unreadable battery holds the last
+  /// known state, so a BLE dropout wakes nobody.
+  bool update(float p_battery);
+
+  BatteryActivity activity() const;
+  void reset();
+
+ private:
+  float deadband_{15.0f};
+  BatteryActivity state_{BatteryActivity::UNKNOWN};
+};
+
+// ---------------------------------------------------------------------------
 // §6.8  Derived figures
 // ---------------------------------------------------------------------------
 //

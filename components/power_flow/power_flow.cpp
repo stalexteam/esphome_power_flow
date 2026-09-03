@@ -223,6 +223,8 @@ void PowerFlow::setup() {
     }
   }
 
+  this->battery_activity_.set_deadband(this->battery_deadband_);
+
   ESP_LOGCONFIG(TAG, "power_flow: %u devices, %u terminals", (unsigned) this->devices_.size(),
                 (unsigned) this->terminals_.size());
 
@@ -641,6 +643,15 @@ static const char *state_name(EdgeState s) {
   }
 }
 
+static const char *activity_name(BatteryActivity a) {
+  switch (a) {
+    case BatteryActivity::CHARGE:    return "charging";
+    case BatteryActivity::DISCHARGE: return "discharging";
+    case BatteryActivity::REST:      return "at rest";
+    default:                         return "unknown";
+  }
+}
+
 void PowerFlow::loop() {
   const uint32_t now = millis();
 
@@ -657,6 +668,18 @@ void PowerFlow::loop() {
   this->resolve_();
   this->solve_();
   this->derive_();
+
+  // The wake signal (§7 amendment of 2026-09-03). Fed from the fast path on
+  // purpose: the point is to light the screen while the outage is happening,
+  // not a minute of averaging later.
+  if (this->on_battery_transition_ != nullptr) {
+    const Terminal *bat = this->find_terminal_(DeviceKind::INVERTER, TerminalRole::BATTERY);
+    if (bat != nullptr && this->battery_activity_.update(bat->raw)) {
+      ESP_LOGI(TAG, "battery now %s (%.0f W)", activity_name(this->battery_activity_.activity()),
+               bat->raw);
+      this->on_battery_transition_->trigger();
+    }
+  }
 
   if (this->renderer_ != nullptr)
     this->renderer_->update();

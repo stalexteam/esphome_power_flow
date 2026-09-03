@@ -31,6 +31,7 @@ usable state simply declares no `switch:`.
 | `status` | — | a `binary_sensor: platform: status` id; distinguishes "HA is gone" from "the mains are gone" |
 | `on_back` | — | automation run by every Back button |
 | `on_node_click` | — | automation run when any node is tapped (a device's own `on_click` overrides it) |
+| `on_battery_transition` | — | automation run when the battery crosses between rest, charging and discharging — the raw reading against `battery_deadband`, with hysteresis on the way back to rest. The earliest reliable sign the grid failed or returned; bind the screen wake here (`lvgl.resume` + backlight on) |
 | `average_window` | `60s` | window differences are computed over |
 | `display_window` | `10s` | window measured values are *shown* over |
 | `idle_below` | `3W` | flow below this renders the edge idle |

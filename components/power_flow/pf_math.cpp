@@ -603,6 +603,49 @@ SupplyMode classify_supply(float p_grid, float p_battery, bool grid_alive, float
 }
 
 // ---------------------------------------------------------------------------
+// §7  Screen wake
+// ---------------------------------------------------------------------------
+
+void BatteryActivityDetector::set_deadband(float watts) {
+  this->deadband_ = is_valid(watts) ? std::fabs(watts) : 0.0f;
+}
+
+bool BatteryActivityDetector::update(float p_battery) {
+  if (!is_valid(p_battery))
+    return false;
+
+  // Leaving rest takes the full deadband; falling back to rest only half of
+  // it. The gap is for the charge tail: absorption tapers smoothly through
+  // any single threshold, and a float current hovering *at* the deadband
+  // would otherwise wake the screen all night. A reading that leaves the
+  // current state's side of zero ends the hold regardless — a sign flip is
+  // never "still charging".
+  const float half = this->deadband_ * 0.5f;
+  BatteryActivity next;
+  if (p_battery > this->deadband_) {
+    next = BatteryActivity::CHARGE;
+  } else if (p_battery < -this->deadband_) {
+    next = BatteryActivity::DISCHARGE;
+  } else if (this->state_ == BatteryActivity::CHARGE && p_battery >= half) {
+    next = BatteryActivity::CHARGE;
+  } else if (this->state_ == BatteryActivity::DISCHARGE && p_battery <= -half) {
+    next = BatteryActivity::DISCHARGE;
+  } else {
+    next = BatteryActivity::REST;
+  }
+
+  if (next == this->state_)
+    return false;
+  const bool fire = this->state_ != BatteryActivity::UNKNOWN;
+  this->state_ = next;
+  return fire;
+}
+
+BatteryActivity BatteryActivityDetector::activity() const { return this->state_; }
+
+void BatteryActivityDetector::reset() { this->state_ = BatteryActivity::UNKNOWN; }
+
+// ---------------------------------------------------------------------------
 // §6.8  Derived figures
 // ---------------------------------------------------------------------------
 
