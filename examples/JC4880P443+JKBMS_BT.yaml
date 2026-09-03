@@ -539,7 +539,7 @@ esphome:
 # Reference a tag, not a branch: a branch means the firmware you build next
 # month may not be the firmware you built today.
 external_components:
-  - source: github://stalexteam/esphome_power_flow@v1.0.4
+  - source: github://stalexteam/esphome_power_flow@v1.0.5
     components: [power_flow]
   - source: github://syssi/esphome-jk-bms@3.0.0
 
