@@ -211,7 +211,7 @@ power_flow:
         power: auto }                            # the unmetered remainder
 
   # ------------------------------------------------------------------- tuning
-  average_window: 15s          # what differences are computed over
+  average_window: 20s          # what differences are computed over
   display_window: 10s          # what measured values are *shown* over. Short on
                                # purpose: the long window is there so two meters
                                # sampled at different instants can be subtracted,
