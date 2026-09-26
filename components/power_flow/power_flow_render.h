@@ -292,7 +292,7 @@ class FlowRenderer {
   /// not one current: every row taps some of it off, and a run whose remainder
   /// has fallen to nothing must stop animating or the diagram claims a load is
   /// drawing when it is not.
-  void update_bus_(Edge &e, uint32_t edge_col);
+  float update_bus_(Edge &e, uint32_t edge_col);
   void update_overlays_();
   void resort_consumers_();
   void set_badge_(Edge &e, const std::string &txt, uint32_t line, uint32_t text, int width,

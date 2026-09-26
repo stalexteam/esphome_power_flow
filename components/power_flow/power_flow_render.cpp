@@ -1132,8 +1132,7 @@ void FlowRenderer::build_(lv_obj_t *parent) {
     // the whole trunk at one density, which drew current travelling past three
     // idle sockets to reach the Boiler; each of these carries only what the
     // rows above it have left, and a run whose remainder is nothing stands
-    // still. The badge still reports the total, because the total is what
-    // leaves the inverter.
+    // still. The badge reports the top run's figure — the metered consumers.
     //
     // The last row's branch is 2 px from the end of the drawn bus, so there is
     // no length below it to animate and none is built.
@@ -1801,6 +1800,23 @@ void FlowRenderer::update_edge_(Edge &e) {
     set_hidden(e.cross, !cross);
   }
 
+  // --- dots ----------------------------------------------------------------
+  //
+  // The bus is drained row by row and does its own sizing; every other edge has
+  // one run and it carries the edge's own figure. A consumer's run sinks with
+  // its row. The bus also hands back its badge figure: the metered sum.
+  const bool run = active && is_valid(v);
+  for (DotRun &r : e.runs) {
+    r.dy = (e.kind == Kind::CONSUMER) ? (int16_t) (ROW_PITCH * e.row) : (int16_t) 0;
+    r.rev = discharging;
+  }
+  float metered = NAN;
+  if (e.kind == Kind::BUS)
+    metered = this->update_bus_(e, col);
+  else
+    for (DotRun &r : e.runs)
+      this->size_run_(r, v, run);
+
   // --- the badge: this edge's flow figure, and the only place it appears ---
   std::string txt;
   uint32_t bcol = role_val;
@@ -1822,6 +1838,20 @@ void FlowRenderer::update_edge_(Edge &e) {
   } else if (st == EdgeState::NO_DATA) {
     txt = DASH;
     bcol = pal::text_off;
+  } else if (e.kind == Kind::BUS) {
+    // The owner's reading, 2026-09-26: the bus total is what the metered
+    // consumers draw, not what leaves the inverter. The inverter's output less
+    // this figure is `Other`, which has its own badge.
+    if (!is_valid(metered)) {
+      txt = DASH;
+      bcol = pal::text_off;
+    } else if (metered <= this->pf_->idle_below()) {
+      txt = "0 W";
+      bcol = pal::text_off;
+      bw = e.bw_idle;
+    } else {
+      txt = fmt_power(metered);
+    }
   } else if (st == EdgeState::IDLE) {
     txt = "0 W";  // §6: an idle edge reads zero, whatever the residual says
     bcol = pal::text_off;
@@ -1832,22 +1862,6 @@ void FlowRenderer::update_edge_(Edge &e) {
     txt = fmt_power(v);
   }
   this->set_badge_(e, txt, col, bcol, bw, bfont);
-
-  // --- dots ----------------------------------------------------------------
-  //
-  // The bus is drained row by row and does its own sizing; every other edge has
-  // one run and it carries the edge's own figure. A consumer's run sinks with
-  // its row.
-  const bool run = active && is_valid(v);
-  for (DotRun &r : e.runs) {
-    r.dy = (e.kind == Kind::CONSUMER) ? (int16_t) (ROW_PITCH * e.row) : (int16_t) 0;
-    r.rev = discharging;
-  }
-  if (e.kind == Kind::BUS)
-    this->update_bus_(e, col);
-  else
-    for (DotRun &r : e.runs)
-      this->size_run_(r, v, run);
 }
 
 /// The trunk, given a current per length rather than one for the whole thing.
@@ -1865,10 +1879,10 @@ void FlowRenderer::update_edge_(Edge &e) {
 /// A sum of same-window measurements has no such floor. It is exactly zero when
 /// nothing below is drawing, and a run at zero stands still.
 ///
-/// The badge still reports the inverter's output, and that is a larger number
-/// than the top run carries. It should be: `Other` — the unmetered remainder —
-/// is drawn leaving at the core, above the first branch, so by the diagram's own
-/// account the trunk never carries it.
+/// Returns the same sum for the badge — the metered consumers, which is what the
+/// top run carries (amended 2026-09-26; it used to be the inverter's output).
+/// Open and de-energized rows draw nothing and add zero; a row with no data
+/// makes the whole figure unknown, a dash rather than an understatement.
 /// Colour, amended 2026-08-25 alongside the split. The trunk used to be painted
 /// by one state — its own terminal's — so it stayed live all the way down while
 /// its dots correctly stopped at the last drawing row. That is what an edge
@@ -1881,13 +1895,14 @@ void FlowRenderer::update_edge_(Edge &e) {
 /// the same grey as the branches it feeds, because there is nothing beyond it
 /// that could ever draw. A dead meter below wins over an open switch: not
 /// knowing is the more serious statement.
-void FlowRenderer::update_bus_(Edge &e, uint32_t edge_col) {
+float FlowRenderer::update_bus_(Edge &e, uint32_t edge_col) {
   const Terminal *t = this->term_(e.terminal);
   const bool on = this->ha_contact_ && t != nullptr && t->state == EdgeState::ACTIVE;
 
   // Per row first, then a running sum from the bottom up.
   float below[MAX_ROWS] = {};
   bool live[MAX_ROWS] = {}, open[MAX_ROWS] = {}, dead[MAX_ROWS] = {};
+  bool unknown = false;
   const size_t rows = std::min(e.runs.size(), (size_t) MAX_ROWS);
   for (const std::vector<uint8_t> *col : {&this->col_left_, &this->col_right_})
     for (uint8_t idx : *col) {
@@ -1904,10 +1919,16 @@ void FlowRenderer::update_bus_(Edge &e, uint32_t edge_col) {
           // density, which is the side of §6.9 to be wrong on.
           if (is_valid(ct->display))
             below[n.row] += std::fabs(ct->display);
+          else
+            unknown = true;
           live[n.row] = true;
           break;
         case EdgeState::IDLE: live[n.row] = true; break;  // on, drawing nothing
         case EdgeState::OPEN: open[n.row] = true; break;
+        case EdgeState::NO_DATA:
+          unknown = true;
+          dead[n.row] = true;
+          break;
         default: dead[n.row] = true; break;
       }
     }
@@ -1942,6 +1963,7 @@ void FlowRenderer::update_bus_(Edge &e, uint32_t edge_col) {
       if (k < e.seg_run.size() && e.seg_run[k] == (uint8_t) i)
         lv_obj_set_style_bg_color(e.segs[k], c, LV_PART_MAIN);
   }
+  return (unknown || rows == 0) ? NAN : below[0];
 }
 
 /// §4.3 — entries that are off or no-data sink to the last rows of their column,
